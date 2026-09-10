@@ -235,14 +235,6 @@ menu() {
 			fi
 		fi
 		[[ -z "$_ver_local" ]] && _ver_local="0"
-		_ver_remote=$(wget -qO- --timeout=3 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
-		[[ -z "$_ver_remote" ]] && _ver_remote=$(curl -sfL --max-time 3 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
-		[[ -z "$_ver_remote" ]] && _ver_remote="$_ver_local"
-		_ver_update=""
-		if [[ -n "$_ver_remote" ]] && [[ "$_ver_local" != "$_ver_remote" ]]; then
-			_latest=$(printf '%s\n%s' "$_ver_local" "$_ver_remote" | sort -V 2>/dev/null | tail -1)
-			[[ "$_latest" = "$_ver_remote" ]] && _ver_update="$_ver_remote"
-		fi
 
 		_sys_down=$(awk "BEGIN {printf \"%.0fM\", ${_rx_bytes:-0}/1024/1024}" 2>/dev/null)
 		_sys_up=$(awk "BEGIN {printf \"%.0fM\", ${_tx_bytes:-0}/1024/1024}" 2>/dev/null)
@@ -306,9 +298,6 @@ menu() {
 		_info_row "$_left3" "$_right3"
 		echo ""
 
-		if [[ -n "$_ver_update" ]]; then
-			printf "%b⚠ Güncelleme mevcut: v%s — [19] Scripti Güncelle seçeneğini kullanın%b\n" "$(c ui_warn)" "$_ver_update" "$(reset)"
-		fi
 		hr
 		section "KULLANICILAR"
 		menu_row 1 "Kullanıcı oluştur" 2 "Kullanıcı kaldır"
@@ -326,7 +315,6 @@ menu() {
 		section "AYARLAR"
 		menu_row 15 "Bağlantılar" 16 "Banner"
 		menu_row 17 "Yedekleme" 18 "Otomatik çalıştırma"
-		menu_option 19 "Scripti güncelle"
 
 		echo ""
 		echo ""
@@ -357,7 +345,6 @@ menu() {
 		16) clear; bannersetup ;;
 		17) clear; userbackup ;;
 		18) autorun ;;
-		19) updatescript ;;
 		0 | 00 | q | Q)
 			printf "%b%s%b\n" "$(c ui_danger)" "Çıkılıyor..." "$(reset)"
 			sleep 2
