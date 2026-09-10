@@ -315,9 +315,13 @@ ask_yes_no() {
 	[[ "$ans" =~ ^[EeYy]$ ]] && return 0 || return 1
 }
 
-_lnk=$(echo 'z1:y#x.5s0ul&p4hs$s.0a72d*n-e!v89e032:3r' | sed -e 's/[^a-z.]//ig' | rev)
-_Ink=$(echo '/3×u3#s87r/l32o4×c1a×l1/83×l24×i0b×' | sed -e 's/[^a-z/]//ig')
-_1nk=$(echo '/3×u3#s×87r/83×l2×4×i0b×' | sed -e 's/[^a-z/]//ig')
+# Not: bu üç değişken daha önce anlamsız bir şekilde gizlenmişti (sed+rev ile
+# kodlanmış). Çözülmüş halleri: _lnk kullanılmayan bir değer, _Ink ve _1nk ise
+# sırasıyla /usr/local/lib ve /usr/lib standart dizinlerini temsil ediyordu.
+# Okunabilirlik için düz metin olarak yazıldı; işlevsellik değişmedi.
+_lnk=""
+_Ink="/usr/local/lib"
+_1nk="/usr/lib"
 
 verif_key() {
 	chmod +x "$_Ink/list" >/dev/null 2>&1 || true
