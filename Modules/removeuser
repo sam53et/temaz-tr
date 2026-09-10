@@ -35,7 +35,7 @@ remove_ovp() {
 	[[ -e "$HOME/${user}.ovpn" ]] && rm -f "$HOME/${user}.ovpn" 2>/dev/null
 	[[ -e /var/www/html/openvpn/"${user}.zip" ]] && rm -f /var/www/html/openvpn/"${user}.zip" 2>/dev/null
 }
-[[ -z "${SSHPLUS_FROM_REPO:-}" ]] && [[ ! -e /usr/lib/sshplus ]] && rm -rf /bin/ > /dev/null 2>&1
+[[ -z "${SSHPLUS_FROM_REPO:-}" ]] && [[ ! -e /usr/lib/sshplus ]] && exit 0
 clear
 banner_info "   SSH Kullanıcısını Kaldır   "
 echo ""

@@ -206,6 +206,18 @@ menu_option_n() {
   printf "%b[%02d]%b %b%s%b" "$(c ui_menu_num)" "$n" "$(reset)" "$(c ui_menu_txt)" "$text" "$(reset)"
 }
 
+# İki sütunlu menü satırı: soldaki etiketin gerçek uzunluğuna göre boşluk
+# hesaplar, böylece sağ sütun etiket uzunluğu ne olursa olsun hep aynı yerden başlar.
+menu_row() {
+  local n1="$1" t1="$2" n2="$3" t2="$4" col_width="${5:-34}"
+  local content_len=$(( 5 + ${#t1} ))
+  local pad=$(( col_width - content_len ))
+  [[ $pad -lt 2 ]] && pad=2
+  menu_option_n "$n1" "$t1"
+  printf '%*s' "$pad" ""
+  menu_option "$n2" "$t2"
+}
+
 prompt() {
   printf "%b%s%b" "$(c ui_prompt)" "$1" "$(reset)"
 }

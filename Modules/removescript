@@ -22,7 +22,7 @@ if [[ "$confirm" =~ ^[EeYy]$ ]]; then
 		rm -f /bin/changepassword /bin/createuser /bin/expiredusers /bin/changeexpiration 2>/dev/null
 		rm -f /bin/expirationmanager /bin/removeuser /bin/verifbot /bin/droplimiter 2>/dev/null
 		rm -f /bin/changelimit /bin/ajuda /bin/sshmonitor /bin/userbackup /bin/instsqd 2>/dev/null
-		rm -f /bin/menu /bin/speedtest /bin/bannersetup /bin/serversettings 2>/dev/null
+		rm -f /bin/menu /bin/speedtest /bin/bannersetup /bin/serversettings /bin/SERVER_NAME 2>/dev/null
 		rm -f /bin/restartservices /bin/rebootsystem /bin/updatescript /bin/connections 2>/dev/null
 		rm -f /bin/vpsinfo /bin/userinfo /bin/verifatt /bin/uexpired 2>/dev/null
 		rm -f /bin/multiport /bin/vpstraffic /bin/autorun 2>/dev/null
