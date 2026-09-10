@@ -1,0 +1,31 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if grep "menu;" /etc/profile >/dev/null 2>&1; then
+	clear
+	color_echo "OTOMATİK ÇALIŞTIRMA KAPATILIYOR" "green"
+	echo ""
+	color_echo "Çalıştırılıyor..." "yellow"
+	sed -i '/menu;/d' /etc/profile 2>/dev/null
+	echo ""
+	color_echo "OTOMATİK ÇALIŞTIRMA KAPALI!" "red"
+	sleep 1.5
+else
+	clear
+	color_echo "OTOMATİK ÇALIŞTIRMA ETKİNLEŞTİRİLİYOR" "green"
+	echo ""
+	color_echo "Çalıştırılıyor..." "yellow"
+	grep -v "^menu;" /etc/profile 2>/dev/null >/tmp/tmpass && mv /tmp/tmpass /etc/profile 2>/dev/null
+	echo "menu;" >>/etc/profile 2>/dev/null
+	echo ""
+	color_echo "OTOMATİK ÇALIŞTIRMA AÇIK!" "green"
+	sleep 1.5
+fi
+exec /bin/menu

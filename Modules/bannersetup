@@ -1,0 +1,47 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+	IP=$(cat /etc/IP)
+else
+	IP=$(hostname -I | awk '{print $1}' 2>/dev/null)
+	[[ -z "$IP" ]] && IP=$(wget -qO- ipv4.icanhazip.com 2>/dev/null)
+	[[ -z "$IP" ]] && IP=$(curl -s ipv4.icanhazip.com 2>/dev/null)
+	[[ -z "$IP" ]] && IP="N/A"
+fi
+
+banner_info "            BANNER AYARI             "
+echo ""
+color_echo "Mevcut IP Adresi: $IP" "green"
+echo ""
+color_echo_n "Banner metnini girin (varsayılan için ENTER'a basın): " "yellow"
+read -r banner_text
+
+if [[ -z "$banner_text" ]]; then
+	banner_text="SSHPLUS MANAGER - IP: $IP"
+fi
+
+echo "$banner_text" >/etc/banner
+echo "$banner_text" >/etc/issue.net
+
+if ! grep -q "^Banner" /etc/ssh/sshd_config 2>/dev/null; then
+	echo "Banner /etc/banner" >>/etc/ssh/sshd_config
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+	systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null
+else
+	service ssh restart 2>/dev/null || service sshd restart 2>/dev/null
+fi
+
+msg_ok "Banner başarıyla güncellendi!"
+echo ""
+color_echo "Banner, kullanıcılar SSH ile bağlandığında görüntülenecektir" "cyan"
+sleep 3

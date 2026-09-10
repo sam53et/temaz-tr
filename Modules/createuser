@@ -1,0 +1,438 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if [[ -f /etc/SSHPlus/db ]]; then
+	source /etc/SSHPlus/db
+elif [[ -f /bin/db ]]; then
+	source /bin/db
+elif [[ -f "$(dirname "$0")/db" ]]; then
+	source "$(dirname "$0")/db"
+fi
+set +o nounset 2>/dev/null || true
+if [[ -z "${SSHPLUS_FROM_REPO:-}" ]]; then
+	_mod_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+	_repo_root="$(cd "${_mod_dir}/.." 2>/dev/null && pwd)"
+	[[ -f "${_repo_root}/install.sh" ]] && [[ -f "${_repo_root}/version" ]] && export SSHPLUS_FROM_REPO=1
+	unset -v _mod_dir _repo_root
+fi
+
+if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+	IP=$(tr -d '\r\n' < /etc/IP)
+else
+	IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+	[[ -z "$IP" ]] && IP=$(wget -qO- --timeout=3 ipv4.icanhazip.com 2>/dev/null)
+	[[ -z "$IP" ]] && IP=$(curl -sfL --max-time 3 ipv4.icanhazip.com 2>/dev/null)
+	[[ -n "$IP" ]] && echo "$IP" > /etc/IP 2>/dev/null
+	[[ -z "$IP" ]] && IP=""
+fi
+
+_get_ssh_port() {
+	local port
+	port=$(grep -E '^[[:space:]]*Port[[:space:]]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+	[[ -z "$port" ]] && port=22
+	echo "$port"
+}
+
+_get_ssh_ports_from_config() {
+	local ports
+	ports=$(grep -E '^[[:space:]]*Port[[:space:]]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | sort -nu | uniq | tr '\n' ' ')
+	ports="${ports%"${ports##*[![:space:]]}"}"
+	[[ -z "$ports" ]] && ports="22"
+	echo "$ports"
+}
+
+_is_port_in_ssh_config() {
+	local check_port="$1" list
+	[[ -z "$check_port" ]] && return 1
+	list="$(_get_ssh_ports_from_config)"
+	[[ " $list " =~ " $check_port " ]] && return 0
+	return 1
+}
+
+_json_escape() {
+	local s="${1:-}"
+	s=${s//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\r'/\\r}
+	s=${s//$'\t'/\\t}
+	printf "%s" "$s"
+}
+
+_build_npvt_json() {
+	local remarks="$1" ssh_host="$2" ssh_port="$3" username="$4" password="$5"
+	local sni="${6:-}" tlsVersion="${7:-DEFAULT}" dnsTTMode="${8:-UDP}" udpgwPort="${9:-7300}"
+
+	printf '{"sshConfigType":"SSH-Direct","remarks":"%s","sshHost":"%s","sshPort":%s,"sshUsername":"%s","sshPassword":"%s","sni":"%s","tlsVersion":"%s","httpProxy":"","authenticateProxy":false,"proxyUsername":"","proxyPassword":"","payload":"","dnsTTMode":"%s","dnsServer":"","nameserver":"","publicKey":"","udpgwPort":%s,"udpgwTransparentDNS":true}' \
+		"$(_json_escape "$remarks")" \
+		"$(_json_escape "$ssh_host")" \
+		"${ssh_port:-22}" \
+		"$(_json_escape "$username")" \
+		"$(_json_escape "$password")" \
+		"$(_json_escape "$sni")" \
+		"$(_json_escape "$tlsVersion")" \
+		"$(_json_escape "$dnsTTMode")" \
+		"${udpgwPort:-7300}"
+}
+
+_b64_encode() {
+	if command -v base64 >/dev/null 2>&1; then
+		base64 -w 0 2>/dev/null || base64 2>/dev/null | tr -d '\n'
+		return 0
+	fi
+	if command -v openssl >/dev/null 2>&1; then
+		openssl base64 2>/dev/null | tr -d '\n'
+		return 0
+	fi
+	return 1
+}
+
+_npvt_link_from_json() {
+	local json="${1:-}"
+	[[ -z "$json" ]] && return 1
+	local encoded
+	encoded="$(printf "%s" "$json" | _b64_encode)" || return 1
+	printf "npvt-ssh://%s" "$encoded"
+}
+
+_gen_password() {
+	if command -v openssl >/dev/null 2>&1; then
+		openssl rand -base64 12 2>/dev/null | tr -d '\n' | tr -d '=+/' | cut -c1-12
+		return 0
+	fi
+	tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 12
+}
+
+_is_int() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
+
+_detect_public_ipv4() {
+	local ip=""
+	if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+		ip=$(tr -d '\r\n' < /etc/IP)
+	fi
+	[[ -z "$ip" ]] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+	if [[ -z "$ip" ]] && command -v curl >/dev/null 2>&1; then
+		ip=$(curl -sfL --max-time 3 ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n')
+	fi
+	if [[ -z "$ip" ]] && command -v wget >/dev/null 2>&1; then
+		ip=$(wget -qO- --timeout=3 ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n')
+	fi
+	printf "%s" "$ip"
+}
+
+_hostname_short() {
+	local h
+	h=$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)
+	[[ -z "$h" ]] && h="server"
+	printf "%s" "$h"
+}
+
+_trim() {
+	local s="${1:-}"
+	s="${s#"${s%%[![:space:]]*}"}"
+	s="${s%"${s##*[![:space:]]}"}"
+	printf "%s" "$s"
+}
+
+_print_kv_aligned() {
+	local icon="$1" key="$2" value="$3"
+	printf "%b%s%b %b%-16s%b %b%s%b\n" \
+		"$(c ui_value)" "$icon" "$(reset)" \
+		"$(c ui_label)" "$key" "$(reset)" \
+		"$(c ui_value)" "$value" "$(reset)"
+}
+
+_mask_password() {
+	local raw="${1:-}"
+	[[ -z "$raw" ]] && echo "" && return
+	local len=${#raw}
+	if [[ $len -le 4 ]]; then
+		echo "••••"
+		return
+	fi
+	local first="${raw:0:2}" last="${raw: -2}"
+	[[ $len -lt 6 ]] && last="${raw: -1}"
+	local mid_len=$(( len - 4 ))
+	[[ $mid_len -lt 0 ]] && mid_len=0
+	local dots
+	printf -v dots '%*s' "$mid_len" ''; dots="${dots// /•}"
+	echo "${first}${dots}${last}"
+}
+
+newclient() {
+    cp /etc/openvpn/client-common.txt ~/$1.ovpn
+    echo "<ca>" >>~/$1.ovpn
+    cat /etc/openvpn/easy-rsa/pki/ca.crt >>~/$1.ovpn
+    echo "</ca>" >>~/$1.ovpn
+    echo "<cert>" >>~/$1.ovpn
+    cat /etc/openvpn/easy-rsa/pki/issued/$1.crt >>~/$1.ovpn
+    echo "</cert>" >>~/$1.ovpn
+    echo "<key>" >>~/$1.ovpn
+    cat /etc/openvpn/easy-rsa/pki/private/$1.key >>~/$1.ovpn
+    echo "</key>" >>~/$1.ovpn
+    echo "<tls-auth>" >>~/$1.ovpn
+    cat /etc/openvpn/ta.key >>~/$1.ovpn
+    echo "</tls-auth>" >>~/$1.ovpn
+}
+[[ -z "${SSHPLUS_FROM_REPO:-}" ]] && [[ ! -e /usr/lib/sshplus ]] && exit 0
+clear
+
+while true; do
+	title_line "KULLANICI OLUŞTUR"
+	printf "%b   %b0%b = Geri   %b00%b = Çıkış\n\n" "$(c muted)" "$(c ui_value)" "$(c muted)" "$(c ui_value)" "$(reset)"
+
+	_ssh_ports_list="$(_get_ssh_ports_from_config)"
+	printf "%b🔌 Yapılandırmada kullanabileceğiniz portlar (/etc/ssh/sshd_config'tan):%b %s\n" "$(c ui_label)" "$(reset)" "$(c ui_value)$_ssh_ports_list$(reset)"
+	echo ""
+
+	printf "%b👤 Kullanıcı adı:%b (0=Geri 00=Çıkış) " "$(c ui_label)" "$(reset)"
+	read -r username
+	username="${username//[[:space:]]/}"
+	[[ "$username" == "0" ]] && exit 0
+	[[ "$username" == "00" ]] && exit 99
+	if [[ -z "$username" ]]; then
+		msg_err "Kullanıcı adı gereklidir."
+		clear
+		continue
+	fi
+	if [[ "$(grep -wc "$username" /etc/passwd 2>/dev/null)" != '0' ]]; then
+		msg_err "Bu kullanıcı zaten mevcut. Başka bir isim deneyin."
+		clear
+		continue
+	fi
+	if ! [[ "$username" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{1,9}$ ]]; then
+		msg_err "Geçersiz kullanıcı adı. 2-10 karakter kullanın: harf/rakam/_/-"
+		clear
+		continue
+	fi
+
+	_default_host="$(_detect_public_ipv4)"
+	_default_port="$(_get_ssh_port)"
+	_default_remark="${username}@$(_hostname_short)"
+	_default_days="98"
+	_default_limit="2"
+
+	printf "%b🔒 Parola:%b %b[otomatik]%b  (Oluşturmak için Enter)\n" "$(c ui_label)" "$(reset)" "$(c muted)" "$(reset)"
+	printf "%b> %b" "$(c ui_prompt)" "$(reset)"
+	read -r password
+	if [[ -z "$password" ]]; then
+		password="$(_gen_password)"
+	fi
+	password="$(_trim "$password")"
+	if [[ ${#password} -lt 4 ]]; then
+		msg_err "Parola çok kısa (en az 4)."
+		clear
+		continue
+	fi
+
+	printf "%b🔖 Not:%b [%s] " "$(c ui_label)" "$(reset)" "$_default_remark"
+	read -r remarks
+	remarks="$(_trim "$remarks")"
+	[[ -z "$remarks" ]] && remarks="$_default_remark"
+
+	printf "%b🌍 SSH Sunucusu:%b [%s] " "$(c ui_label)" "$(reset)" "${_default_host:-}"
+	read -r ssh_host
+	ssh_host="$(_trim "$ssh_host")"
+	[[ -z "$ssh_host" ]] && ssh_host="$_default_host"
+	[[ -z "$ssh_host" ]] && ssh_host="N/A"
+
+	printf "%b🔌 SSH Portu:%b [%s] " "$(c ui_label)" "$(reset)" "$_default_port"
+	read -r ssh_port
+	ssh_port="$(_trim "$ssh_port")"
+	[[ -z "$ssh_port" ]] && ssh_port="$_default_port"
+	if ! _is_int "$ssh_port" || [[ "$ssh_port" -lt 1 || "$ssh_port" -gt 65535 ]]; then
+		msg_err "Geçersiz port. 1 ile 65535 arasında bir sayı olmalıdır."
+		clear
+		continue
+	fi
+	if ! _is_port_in_ssh_config "$ssh_port"; then
+		msg_err "Port $ssh_port yukarıdaki listede yok (/etc/ssh/sshd_config içinde bulunmuyor). Şunlardan birini kullanın: $_ssh_ports_list"
+		clear
+		continue
+	fi
+
+	printf "%b⏳ Geçerlilik (gün):%b [%s] " "$(c ui_label)" "$(reset)" "$_default_days"
+	read -r dias
+	dias="$(_trim "$dias")"
+	[[ -z "$dias" ]] && dias="$_default_days"
+	if ! _is_int "$dias" || [[ "$dias" -lt 1 ]]; then
+		msg_err "Geçerlilik günü pozitif bir sayı olmalıdır."
+		clear
+		continue
+	fi
+
+	printf "%b🔗 Bağlantı limiti:%b [%s] " "$(c ui_label)" "$(reset)" "$_default_limit"
+	read -r sshlimiter
+	sshlimiter="$(_trim "$sshlimiter")"
+	[[ -z "$sshlimiter" ]] && sshlimiter="$_default_limit"
+	if ! _is_int "$sshlimiter" || [[ "$sshlimiter" -lt 1 ]]; then
+		msg_err "Bağlantı limiti pozitif bir sayı olmalıdır."
+		clear
+		continue
+	fi
+
+	sni=""
+	udpgwPort="7300"
+	dnsTTMode="UDP"
+	tlsVersion="DEFAULT"
+	printf "\n%bGelişmiş seçenekler:%b [Enter] atla   [a] gelişmişi düzenle\n" "$(c ui_label)" "$(reset)"
+	read -r adv
+	if [[ "${adv:-}" =~ ^[Aa]$ ]]; then
+		title_line "GELİŞMİŞ SEÇENEKLER"
+		printf "%bSNI:%b [%s] " "$(c ui_label)" "$(reset)" ""
+		read -r sni
+		printf "%bUDP GW Portu:%b [%s] " "$(c ui_label)" "$(reset)" "$udpgwPort"
+		read -r _p
+		[[ -n "$_p" ]] && udpgwPort="$_p"
+		printf "%bDNS modu (UDP/TCP/DOH):%b [%s] " "$(c ui_label)" "$(reset)" "$dnsTTMode"
+		read -r _d
+		[[ -n "$_d" ]] && dnsTTMode="$_d"
+		printf "%bTLS sürümü:%b [%s] " "$(c ui_label)" "$(reset)" "$tlsVersion"
+		read -r _t
+		[[ -n "$_t" ]] && tlsVersion="$_t"
+	fi
+
+	final=$(date "+%Y-%m-%d" -d "+$dias days" 2>/dev/null)
+	gui=$(date "+%d/%m/%Y" -d "+$dias days" 2>/dev/null)
+	[[ -z "$final" ]] && final="never"
+	[[ -z "$gui" ]] && gui="$final"
+
+	hr
+	printf "%bKullanıcı oluşturmaya devam edilsin mi? [E/h]:%b " "$(c ui_prompt)" "$(reset)"
+	read -r proceed
+	[[ -z "$proceed" ]] && proceed="E"
+	if [[ "$proceed" =~ ^[Hh]$ ]]; then
+		exit 0
+	fi
+
+	break
+done
+
+useradd -e "$final" -M -s /bin/false "$username" >/dev/null 2>&1 || {
+	echo ""
+	msg_err "$username kullanıcısı oluşturulamadı"
+	echo ""
+	exit 1
+}
+if ! sshplus_set_system_password "$username" "$password"; then
+	userdel -f "$username" >/dev/null 2>&1 || true
+	echo ""
+	msg_err "$username için parola ayarlanamadı"
+	echo ""
+	exit 1
+fi
+
+sshplus_with_db_lock sshplus_db_put_user \
+	"$username" \
+	"$sshlimiter" \
+	"$final" \
+	"$(sshplus_now_date)" \
+	0 \
+	0 \
+	0 \
+	"never" \
+	"$password" || true
+
+config_json="$(_build_npvt_json "$remarks" "$ssh_host" "$ssh_port" "$username" "$password" "$sni" "$tlsVersion" "$dnsTTMode" "$udpgwPort")"
+import_link="$(_npvt_link_from_json "$config_json" 2>/dev/null || true)"
+
+show_pass_plain=0
+show_link=0
+_result_redraw() {
+	clear
+	title_line "SSH HESABI OLUŞTURULDU"
+	echo ""
+	_print_kv_aligned "🌍" "Sunucu:" "$ssh_host"
+	_print_kv_aligned "🔌" "Port:" "$ssh_port"
+	_print_kv_aligned "👤" "Kullanıcı adı:" "$username"
+	if [[ "$show_pass_plain" -eq 1 ]]; then
+		_print_kv_aligned "🔒" "Parola:" "$password"
+	else
+		_print_kv_aligned "🔒" "Parola:" "$(_mask_password "$password")"
+	fi
+	_print_kv_aligned "🔖" "Not:" "$remarks"
+	_print_kv_aligned "⏳" "Bitiş:" "${gui} (${dias}g)"
+	_print_kv_aligned "🔗" "Bağlantı limiti:" "$sshlimiter"
+
+	echo ""
+	printf "%bİçe aktarma bağlantısı:%b " "$(c ui_label)" "$(reset)"
+	if [[ "$show_link" -eq 1 ]]; then
+		if [[ -n "${import_link:-}" ]]; then
+			printf "%s\n" "$import_link"
+		else
+			msg_warn "İçe aktarma bağlantısı oluşturulamadı (base64/openssl eksik)."
+		fi
+	else
+		printf "%b[Göstermek için l tuşuna basın]%b\n" "$(c muted)" "$(reset)"
+	fi
+
+	echo ""
+	printf "%bYapılandırma JSON:%b " "$(c ui_label)" "$(reset)"
+	if [[ "$show_link" -eq 1 ]]; then
+		printf "%s\n" "$config_json"
+	else
+		printf "%b[Göstermek için l tuşuna basın]%b\n" "$(c muted)" "$(reset)"
+	fi
+
+	echo ""
+	printf "%bTuşlar:%b [p] Parolayı göster/gizle  [l] Bağlantıyı göster/gizle  [Enter] Devam\n" "$(c ui_muted)" "$(reset)"
+}
+
+_result_redraw
+while true; do
+	key=""
+	read -n 1 -s key 2>/dev/null || read -r key
+	case "$key" in
+		p|P) show_pass_plain=$(( 1 - show_pass_plain )); _result_redraw ;;
+		l|L) show_link=$(( 1 - show_link )); _result_redraw ;;
+		''|$'\r') break ;;
+	esac
+done
+
+if [[ -e /etc/openvpn/server.conf ]]; then
+	printf "\n%b📦 Şimdi OpenVPN dosyası oluşturulsun mu? [e/H]:%b " "$(c ui_prompt)" "$(reset)"
+	read -r _gen_ovpn || _gen_ovpn=""
+	[[ -z "$_gen_ovpn" ]] && _gen_ovpn="N"
+	if [[ "$_gen_ovpn" =~ ^[EeYy]$ ]]; then
+		printf "%bKullanıcı adı/parola .ovpn içine gömülsün mü? [e/H]:%b " "$(c ui_prompt)" "$(reset)"
+		read -r _embed || _embed=""
+		[[ -z "$_embed" ]] && _embed="N"
+
+		if [[ -d /etc/openvpn/easy-rsa ]]; then
+			(
+				cd /etc/openvpn/easy-rsa/ || exit 1
+				./easyrsa build-client-full "$username" nopass
+			) >/dev/null 2>&1 || msg_warn "OpenVPN istemci sertifikası oluşturulamadı."
+		fi
+		newclient "$username" >/dev/null 2>&1 || msg_warn "OpenVPN profili oluşturulamadı."
+
+		if [[ "$_embed" =~ ^[EeYy]$ ]] && [[ -f "/root/${username}.ovpn" ]]; then
+			sed -e "s;auth-user-pass;<auth-user-pass>\n${username}\n${password}\n</auth-user-pass>;g" "/root/${username}.ovpn" >"/root/tmp.ovpn" 2>/dev/null && mv -f "/root/tmp.ovpn" "/root/${username}.ovpn"
+		fi
+
+		if command -v zip >/dev/null 2>&1 && [[ -f "/root/${username}.ovpn" ]]; then
+			rm -f "/root/${username}.zip" 2>/dev/null || true
+			zip -j "/root/${username}.zip" "/root/${username}.ovpn" >/dev/null 2>&1 || true
+			if [[ -d /var/www/html/openvpn ]]; then
+				mv -f "/root/${username}.zip" "/var/www/html/openvpn/${username}.zip" >/dev/null 2>&1 || true
+				msg_ok "OpenVPN dosyası: /var/www/html/openvpn/${username}.zip"
+			else
+				msg_ok "OpenVPN dosyası: /root/${username}.zip"
+			fi
+		else
+			msg_warn "zip bulunamadı veya .ovpn eksik; OpenVPN paketi oluşturulmadı."
+		fi
+	fi
+fi
+
+hr
+printf "%bMenüye dönmek için Enter'a basın…%b" "$(c ui_prompt)" "$(reset)"
+read -r _
+exit 0

@@ -1,0 +1,390 @@
+#!/bin/bash
+
+_mod_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+_repo_root="$(cd "${_mod_dir}/.." 2>/dev/null && pwd)"
+if [[ -f "${_repo_root}/install.sh" ]] && [[ -f "${_repo_root}/version" ]]; then
+	export SSHPLUS_FROM_REPO=1
+fi
+
+if [[ -f "${_mod_dir}/colors" ]]; then
+	source "${_mod_dir}/colors"
+elif [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+fi
+
+if [[ -f "${_mod_dir}/db" ]]; then
+	source "${_mod_dir}/db"
+elif [[ -f /etc/SSHPlus/db ]]; then
+	source /etc/SSHPlus/db
+elif [[ -f /bin/db ]]; then
+	source /bin/db
+fi
+unset -v _mod_dir _repo_root
+
+if ! type header_line &>/dev/null; then
+	header_line() {
+		local left="$1" right="$2" cols pad
+		cols="$(tput cols 2>/dev/null || echo 80)"
+		pad=$(( cols - ${#left} - ${#right} ))
+		[[ $pad -lt 1 ]] && pad=1
+		printf "%s%*s%s\n" "$left" "$pad" "" "$right"
+	}
+fi
+if ! type menu_option_n &>/dev/null; then
+	menu_option_n() {
+		local n="$1" text="$2"
+		if type c &>/dev/null && type reset &>/dev/null; then
+			printf "%b[%02d]%b %b%s%b" "$(c ui_menu_num 2>/dev/null)" "$n" "$(reset 2>/dev/null)" "$(c ui_menu_txt 2>/dev/null)" "$text" "$(reset 2>/dev/null)"
+		else
+			printf "[%02d] %s" "$n" "$text"
+		fi
+	}
+fi
+
+fun_bar() {
+	local command1="$1"
+	local command2="$2"
+
+	(
+		[[ -e $HOME/fim ]] && rm $HOME/fim
+		[[ -z "${SSHPLUS_FROM_REPO:-}" ]] && [[ ! -e /usr/lib/sshplus ]] && rm -rf /bin/menu >/dev/null 2>&1
+		${command1} -y >/dev/null 2>&1
+		${command2} -y >/dev/null 2>&1
+		touch $HOME/fim
+	) >/dev/null 2>&1 &
+
+	tput civis
+	yellow_code=$(get_color_code "warn")
+	red_code=$(get_color_code "danger")
+	white_code=$(get_color_code "text")
+	green_code=$(get_color_code "ok")
+	reset_code=$(get_reset_code)
+
+	echo -ne "${yellow_code}["
+	while true; do
+		for ((i = 0; i < 18; i++)); do
+			echo -ne "${red_code}#"
+			sleep 0.1s
+		done
+		[[ -e $HOME/fim ]] && rm $HOME/fim && break
+		echo -e "${yellow_code}]"
+		sleep 1s
+		tput cuu1
+		tput dl1
+		echo -ne "${yellow_code}["
+	done
+	echo -e "${yellow_code}]${white_code} -${green_code} TAMAM !${white_code}${reset_code}"
+	tput cnorm
+}
+if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+	IP=$(cat /etc/IP)
+else
+	IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+	[[ -z "$IP" ]] && IP=$(wget -qO- --timeout=3 ipv4.icanhazip.com 2>/dev/null)
+	[[ -z "$IP" ]] && IP=$(curl -sfL --max-time 3 ipv4.icanhazip.com 2>/dev/null)
+	[[ -n "$IP" ]] && echo "$IP" > /etc/IP 2>/dev/null
+	[[ -z "$IP" ]] && IP=""
+fi
+
+ensure_fetch_deps() {
+	[[ $(id -u) -ne 0 ]] && return 0
+	local need=""
+	command -v wget &>/dev/null || need="wget"
+	command -v curl &>/dev/null || need="${need:+$need }curl"
+	[[ -z "$need" ]] && return 0
+	apt-get update -qq &>/dev/null
+	apt-get install -y wget curl &>/dev/null && echo "IP/sürüm kontrolleri için eksik araçlar ($need) kuruldu." >&2
+}
+
+get_refresh_interval() {
+	local config_file="/etc/SSHPlus/refresh_interval"
+	local default_interval=30
+	if [[ -f "$config_file" ]] && [[ -s "$config_file" ]]; then
+		local interval
+		interval=$(tr -d '\r\n' < "$config_file" 2>/dev/null | grep -E '^[0-9]+$' | head -1)
+		if [[ -n "$interval" ]] && [[ "$interval" -ge 5 ]] && [[ "$interval" -le 300 ]]; then
+			echo "$interval"
+			return
+		fi
+	fi
+	echo "$default_interval"
+}
+
+menu() {
+	while true; do
+		if [[ "$(grep -c "Ubuntu" /etc/issue.net 2>/dev/null)" = "1" ]]; then
+			system=$(cut -d' ' -f1 /etc/issue.net 2>/dev/null)
+			system+=" "
+			system+=$(cut -d' ' -f2 /etc/issue.net 2>/dev/null | awk -F "." '{print $1}')
+		elif [[ "$(grep -c "Debian" /etc/issue.net 2>/dev/null)" = "1" ]]; then
+			system=$(cut -d' ' -f1 /etc/issue.net 2>/dev/null)
+			system+=" "
+			system+=$(cut -d' ' -f3 /etc/issue.net 2>/dev/null)
+		else
+			system=$(cut -d' ' -f1 /etc/issue.net 2>/dev/null)
+		fi
+
+		_ons=$(ps -x | grep sshd | grep -v root | grep priv | wc -l)
+
+		_expuser=0
+		_today_ymd=$(date +"%Y%m%d")
+		for _u in $(awk -F: '$3>=1000 {print $1}' /etc/passwd 2>/dev/null | grep -v nobody); do
+			_line="$(sshplus_db_get_line "$_u" 2>/dev/null || true)"
+			if [[ -z "${_line:-}" ]]; then
+				sshplus_with_db_lock sshplus_db_ensure_user "$_u" >/dev/null 2>&1 || true
+				_line="$(sshplus_db_get_line "$_u" 2>/dev/null || true)"
+			fi
+			_exp="$(awk '{print $3}' <<<"${_line:-}" 2>/dev/null)"
+			[[ -z "${_exp:-}" || "$_exp" == "never" ]] && continue
+			_exp_ymd=$(date -d "$_exp" +"%Y%m%d" 2>/dev/null)
+			[[ -n "$_exp_ymd" && "$_today_ymd" -ge "$_exp_ymd" ]] && _expuser=$((_expuser + 1))
+		done
+
+		if [[ -e /etc/openvpn/openvpn-status.log ]]; then
+			_onop=$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log 2>/dev/null || echo "0")
+		else
+			_onop="0"
+		fi
+
+		if [[ -e /etc/default/dropbear ]]; then
+			_drp=$(ps aux | grep dropbear | grep -v grep | wc -l)
+			_ondrp=$((_drp - 1))
+		else
+			_ondrp="0"
+		fi
+
+		_onli=$((_ons + _onop + _ondrp))
+		_ram=$(printf ' %-9s' "$(free -h | grep -i mem | awk '{print $2}')")
+		_usor=$(printf '%-8s' "$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2 }')")
+		_usop=$(printf '%-1s' "$(top -bn1 | awk '/Cpu/ { cpu = "" 100 - $8 "%" }; END { print cpu }')")
+		_core=$(printf '%-1s' "$(grep -c cpu[0-9] /proc/stat)")
+		_system=$(printf '%-14s' "$system")
+		_hora=$(printf '%(%H:%M:%S)T')
+		_onlin=$(printf '%-5s' "$_onli")
+		_userexp=$(printf '%-5s' "$_expuser")
+		_tuser=$(awk -F: '$3>=1000 {print $1}' /etc/passwd | grep -v nobody | wc -l)
+
+		if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+			_ipv4=$(tr -d '\r\n' < /etc/IP)
+		else
+			_ipv4=$(hostname -I 2>/dev/null | awk '{print $1}')
+			[[ -z "$_ipv4" ]] && _ipv4=$(wget -qO- --timeout=3 ipv4.icanhazip.com 2>/dev/null)
+			[[ -z "$_ipv4" ]] && _ipv4=$(curl -sfL --max-time 3 ipv4.icanhazip.com 2>/dev/null)
+			if [[ -z "$_ipv4" ]]; then
+				ensure_fetch_deps
+				_ipv4=$(wget -qO- --timeout=5 ipv4.icanhazip.com 2>/dev/null)
+				[[ -z "$_ipv4" ]] && _ipv4=$(curl -sfL --max-time 5 ipv4.icanhazip.com 2>/dev/null)
+			fi
+			[[ -n "$_ipv4" ]] && echo "$_ipv4" > /etc/IP 2>/dev/null
+			[[ -z "$_ipv4" ]] && _ipv4="N/A"
+		fi
+
+		_ipv6=$(hostname -I | awk '{for(i=1;i<=NF;i++) if($i ~ /:/) print $i}' | head -1)
+		[[ -z "$_ipv6" ]] && _ipv6=$(ip -6 addr show | grep -oE '([0-9a-fA-F]{0,4}:){7}[0-9a-fA-F]{0,4}' | head -1)
+		[[ -z "$_ipv6" ]] && _ipv6="N/A"
+
+		_hostname=$(hostname 2>/dev/null || echo "N/A")
+		_hostname_short=$(hostname -s 2>/dev/null || echo "N/A")
+		_fqdn=$(hostname -f 2>/dev/null || echo "N/A")
+
+		if [[ "$_hostname" != "$_fqdn" ]] && [[ "$_fqdn" != "N/A" ]]; then
+			_hostname_display="${_hostname} (${_fqdn})"
+		else
+			_hostname_display="$_hostname"
+		fi
+
+		_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+		if [[ -n "$_interface" ]] && [[ -f /proc/net/dev ]]; then
+			_rx_bytes=$(grep "$_interface" /proc/net/dev | awk '{print $2}')
+			_tx_bytes=$(grep "$_interface" /proc/net/dev | awk '{print $10}')
+
+			_rx_mb=$(awk "BEGIN {printf \"%.2f\", $_rx_bytes/1024/1024}")
+			_tx_mb=$(awk "BEGIN {printf \"%.2f\", $_tx_bytes/1024/1024}")
+
+			_net_download="${_rx_mb}MB"
+			_net_upload="${_tx_mb}MB"
+			_net_stats="↓${_net_download} ↑${_net_upload}"
+		else
+			_net_download="N/A"
+			_net_upload="N/A"
+			_net_stats="N/A"
+		fi
+
+		_disk_used=$(df -h / | awk 'NR==2 {print $3}')
+		_disk_total=$(df -h / | awk 'NR==2 {print $2}')
+		_disk_percent=$(df -h / | awk 'NR==2 {print $5}')
+		_ssh_port=$(grep -E '^[[:space:]]*Port[[:space:]]+' /etc/ssh/sshd_config 2>/dev/null | head -1 | awk '{print $2}')
+		[[ -z "$_ssh_port" ]] && _ssh_port=22
+		_ports="$_ssh_port"
+
+		_ver_repo="${_ver_repo:-https://raw.githubusercontent.com/sam53et/temaz-tr/main}"
+		[[ -f /etc/SSHPlus/repo_url ]] && [[ -s /etc/SSHPlus/repo_url ]] && _ver_repo=$(tr -d '\r\n' < /etc/SSHPlus/repo_url)
+		_ver_local=$(cat /etc/SSHPlus/version 2>/dev/null || cat /bin/version 2>/dev/null)
+		_ver_local="${_ver_local:-0}"
+		if [[ -z "$_ver_local" ]] || [[ "$_ver_local" == "0" ]]; then
+			ensure_fetch_deps
+			_ver_fetched=$(wget -qO- --timeout=5 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
+			[[ -z "$_ver_fetched" ]] && _ver_fetched=$(curl -sfL --max-time 5 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
+			if [[ -n "$_ver_fetched" ]]; then
+				mkdir -p /etc/SSHPlus
+				echo "$_ver_fetched" > /etc/SSHPlus/version 2>/dev/null
+				echo "$_ver_fetched" > /bin/version 2>/dev/null
+				_ver_local="$_ver_fetched"
+			fi
+		fi
+		[[ -z "$_ver_local" ]] && _ver_local="0"
+		_ver_remote=$(wget -qO- --timeout=3 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
+		[[ -z "$_ver_remote" ]] && _ver_remote=$(curl -sfL --max-time 3 "$_ver_repo/version" 2>/dev/null | head -1 | tr -d '\r\n')
+		[[ -z "$_ver_remote" ]] && _ver_remote="$_ver_local"
+		_ver_update=""
+		if [[ -n "$_ver_remote" ]] && [[ "$_ver_local" != "$_ver_remote" ]]; then
+			_latest=$(printf '%s\n%s' "$_ver_local" "$_ver_remote" | sort -V 2>/dev/null | tail -1)
+			[[ "$_latest" = "$_ver_remote" ]] && _ver_update="$_ver_remote"
+		fi
+
+		_sys_down=$(awk "BEGIN {printf \"%.0fM\", ${_rx_bytes:-0}/1024/1024}" 2>/dev/null)
+		_sys_up=$(awk "BEGIN {printf \"%.0fM\", ${_tx_bytes:-0}/1024/1024}" 2>/dev/null)
+		[[ -z "$_sys_down" || "$_sys_down" = "0M" ]] && _sys_down="${_rx_mb:-0}M"
+		[[ -z "$_sys_up" || "$_sys_up" = "0M" ]] && _sys_up="${_tx_mb:-0}M"
+		_uptime_short=$(awk '{s=$1; d=int(s/86400); h=int((s%86400)/3600); m=int((s%3600)/60); if(d>0) printf "%dd %02d:%02d", d,h,m; else printf "%02d:%02d", h,m}' /proc/uptime 2>/dev/null)
+		[[ -z "$_uptime_short" ]] && _uptime_short=$(uptime -p 2>/dev/null | sed 's/up //;s/ days\?,/d /;s/ hours\?,/:/;s/ minutes\?.*//;s/ //g')
+		_n_expiring=0
+		for _u in $(awk -F: '$3>=1000 {print $1}' /etc/passwd 2>/dev/null | grep -v nobody); do
+			_exp=$(chage -l "$_u" 2>/dev/null | grep "Account expires" | cut -d' ' -f3-)
+			[[ "$_exp" = "never" || -z "$_exp" ]] && continue
+			_ed=$(date -d "$_exp" +%s 2>/dev/null); _now=$(date +%s)
+			_diff=$(( (_ed - _now) / 86400 ))
+			[[ $_diff -le 7 && $_diff -gt 0 ]] && ((_n_expiring++)) || true
+		done
+		_ram_total_short=$(free -m 2>/dev/null | awk 'NR==2{print $2}')
+		[[ -n "$_ram_total_short" ]] && _ram_total_short="${_ram_total_short}M" || _ram_total_short=$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')
+		_ram_pct=$(echo "${_usor}" | sed 's/%//' | awk '{printf "%.0f", $1+0}')
+		_cpu_pct=$(echo "${_usop}" | sed 's/%//' | awk '{printf "%.0f", $1+0}')
+		_disk_pct=$(echo "${_disk_percent}" | sed 's/%//' | awk '{printf "%.0f", $1+0}')
+		_ram_pct=${_ram_pct:-0}; _cpu_pct=${_cpu_pct:-0}; _disk_pct=${_disk_pct:-0}
+		_n_offline=$((_tuser - ${_onli:-0} - ${_expuser:-0}))
+		[[ $_n_offline -lt 0 ]] && _n_offline=0
+		_sys_down_disp=$(awk -v b="${_rx_bytes:-0}" 'BEGIN{if(b>=1073741824) printf "%.1fG", b/1073741824; else if(b>=1048576) printf "%.1fM", b/1048576; else if(b>=1024) printf "%.0fK", b/1024; else printf "%dB", b+0}')
+		_sys_up_disp=$(awk -v b="${_tx_bytes:-0}" 'BEGIN{if(b>=1073741824) printf "%.1fG", b/1073741824; else if(b>=1048576) printf "%.1fM", b/1048576; else if(b>=1024) printf "%.0fK", b/1024; else printf "%dB", b+0}')
+		_sys_traffic_str="⬇ ${_sys_down_disp}  ⬆ ${_sys_up_disp}"
+		_pct_style() {
+			local n="${1:-0}"
+			[[ "$n" -ge 95 ]] 2>/dev/null && { printf "%b" "$(c danger)"; return; }
+			[[ "$n" -ge 85 ]] 2>/dev/null && { printf "%b" "$(c warn)"; return; }
+			printf "%b" "$(c ui_value)"
+		}
+		_info_row() {
+			local left="$1" right="$2"
+			printf "%b%-52s%b%b%s%b\n" "$(c ui_value)" "$left" "$(reset)" "$(c ui_value)" "$right" "$(reset)"
+		}
+
+		clear
+
+		_header_right="${_hostname_short:-$_hostname}"
+		[[ -z "$_header_right" ]] && _header_right="${HOSTNAME:-}"
+		[[ -z "$_header_right" ]] && _header_right="$(cat /etc/hostname 2>/dev/null || true)"
+		[[ -z "$_header_right" ]] && _header_right="—"
+		header_line "SSH PLUS YÖNETİCİSİ v${_ver_local}" "$_header_right"
+		hr
+		echo ""
+
+		_left1_len=$(( 15 + ${#_cpu_pct} + ${#_ram_pct} + ${#_disk_pct} ))
+		_pad1=$(( 50 - _left1_len )); [[ $_pad1 -lt 1 ]] && _pad1=1
+		_right1="📶 ${_sys_traffic_str}"
+		printf "%b🧠 %b%s%%%b  %b🧩 %b%s%%%b  %b💾 %b%s%%%b%*s%b%s%b\n" \
+			"$(c ui_value)" "$(_pct_style "$_cpu_pct")" "$_cpu_pct" "$(reset)" \
+			"$(c ui_value)" "$(_pct_style "$_ram_pct")" "$_ram_pct" "$(reset)" \
+			"$(c ui_value)" "$(_pct_style "$_disk_pct")" "$_disk_pct" "$(reset)" \
+			"$_pad1" "" "$(c ui_value)" "$_right1" "$(reset)"
+		_left2="🌍 ${_ipv4}  |  ${_ipv6}"
+		_right2="⏳ ${_uptime_short}"
+		_info_row "$_left2" "$_right2"
+		_left3="🔌 ${_ports}"
+		_right3="👩🏻 ${_tuser}  ($(status_dot active) ${_onli} $(status_dot inactive) ${_n_offline})"
+		_info_row "$_left3" "$_right3"
+		echo ""
+
+		if [[ -n "$_ver_update" ]]; then
+			printf "%b⚠ Güncelleme mevcut: v%s — [19] Scripti Güncelle seçeneğini kullanın%b\n" "$(c ui_warn)" "$_ver_update" "$(reset)"
+		fi
+		hr
+		section "KULLANICILAR"
+		menu_option_n 1 "Kullanıcı oluştur"
+		printf "                 "
+		menu_option 2 "Kullanıcı kaldır"
+		menu_option_n 3 "Parola değiştir"
+		printf "             "
+		menu_option 4 "Süre yöneticisi"
+		menu_option 5 "Hesap limiti"
+		
+		section "İZLEME"
+		menu_option_n 7 "Kullanıcıları izle"
+		printf "               "
+		menu_option 8 "Hız testi"
+		menu_option_n 9 "VPS trafiği"
+		printf "                 "
+		menu_option 10 "VPS bilgisi"
+
+		section "SİSTEM"
+		menu_option_n 11 "Servisleri yeniden başlat"
+		printf "            "
+		menu_option 12 "Sistemi yeniden başlat"
+		menu_option_n 13 "Sunucu ayarları"
+		printf "             "
+		menu_option 14 "Scripti kaldır ⚠️"
+
+		section "AYARLAR"
+		menu_option_n 15 "Bağlantılar"
+		printf "                 "
+		menu_option 16 "Banner"
+		menu_option_n 17 "Yedekleme"
+		printf "                      "
+		menu_option 18 "Otomatik çalıştırma"
+		menu_option_n 19 "Scripti güncelle"
+
+		echo ""
+		echo ""
+		printf "%b[00/q/Q] Çıkış%b\n" "$(c ui_menu_num)" "$(reset)"
+		hr
+		echo ""
+		prompt "Seçenek belirleyin: "
+		local refresh_interval
+		refresh_interval=$(get_refresh_interval)
+		read -t "$refresh_interval" -r x || x=""
+		[[ "$x" == "" ]] && continue
+
+		case "$x" in
+		1 | 01) clear; createuser; _ret=$?; [[ $_ret -eq 99 ]] && exit 0 ;;
+		2 | 02) clear; removeuser; _ret=$?; [[ $_ret -eq 99 ]] && exit 0; sleep 3 ;;
+		3 | 03) clear; changepassword; _ret=$?; [[ $_ret -eq 99 ]] && exit 0; sleep 3 ;;
+		4 | 04) clear; expirationmanager; _ret=$?; [[ $_ret -eq 99 ]] && exit 0; sleep 1 ;;
+		5 | 05) clear; changelimit; _ret=$?; [[ $_ret -eq 99 ]] && exit 0; sleep 3 ;;
+		7 | 07) clear; sshmonitor ;;
+		8 | 08) clear; speedtest ;;
+		9 | 09) vpstraffic ;;
+		10) clear; vpsinfo ;;
+		11) clear; restartservices; sleep 5 ;;
+		12) clear; rebootsystem ;;
+		13) clear; serversettings; sleep 5 ;;
+		14) clear; exec removescript ;;
+		15) connections; exit 0 ;;
+		16) clear; bannersetup ;;
+		17) clear; userbackup ;;
+		18) autorun ;;
+		19) updatescript ;;
+		0 | 00 | q | Q)
+			printf "%b%s%b\n" "$(c ui_danger)" "Çıkılıyor..." "$(reset)"
+			sleep 2
+			clear
+			exit 0
+			;;
+		*)
+			msg_err "Geçersiz seçenek !"
+			sleep 2
+			;;
+		esac
+	done
+}
+menu

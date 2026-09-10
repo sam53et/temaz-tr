@@ -1,0 +1,70 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+banner_info "          KURULUMU KALDIR                 "
+echo ""
+msg_err "Bu işlem SSH Plus Manager kurulumunu kaldıracak!"
+color_echo_n "Kesinlikle emin misiniz? [e/H]: " "red"
+read -r confirm
+if [[ "$confirm" =~ ^[EeYy]$ ]]; then
+	color_echo_n "Onaylamak için 'DELETE' yazın: " "red"
+	read -r confirm2
+	if [[ "$confirm2" == "DELETE" ]]; then
+		color_echo "Kurulum kaldırılıyor..." "yellow"
+
+		rm -f /bin/changepassword /bin/createuser /bin/expiredusers /bin/changeexpiration 2>/dev/null
+		rm -f /bin/expirationmanager /bin/removeuser /bin/verifbot /bin/droplimiter 2>/dev/null
+		rm -f /bin/changelimit /bin/ajuda /bin/sshmonitor /bin/userbackup /bin/instsqd 2>/dev/null
+		rm -f /bin/menu /bin/speedtest /bin/bannersetup /bin/serversettings 2>/dev/null
+		rm -f /bin/restartservices /bin/rebootsystem /bin/updatescript /bin/connections 2>/dev/null
+		rm -f /bin/vpsinfo /bin/userinfo /bin/verifatt /bin/uexpired 2>/dev/null
+		rm -f /bin/multiport /bin/vpstraffic /bin/autorun 2>/dev/null
+		rm -f /usr/local/bin/ookla-speedtest 2>/dev/null
+		rm -f /bin/removescript 2>/dev/null
+
+		rm -f /bin/h /bin/version 2>/dev/null
+
+		rm -f /etc/SSHPlus/cabecalho /etc/SSHPlus/bot /etc/SSHPlus/open.py 2>/dev/null
+		rm -f /etc/SSHPlus/proxy.py /etc/SSHPlus/colors /etc/SSHPlus/db 2>/dev/null
+
+		rm -rf /etc/SSHPlus 2>/dev/null
+
+		rm -rf /etc/bot 2>/dev/null
+
+		rm -f /etc/autostart /etc/IP /usr/lib/sshplus /usr/lib/licence 2>/dev/null
+		rm -f /usr/local/lib/list 2>/dev/null
+
+		rm -f "${HOME:-/root}/users.db" "${HOME:-/root}/sessions.log" 2>/dev/null
+		rm -f "${HOME:-/root}/users.db.lock" 2>/dev/null
+		rm -rf "${HOME:-/root}/users.db.lock.d" 2>/dev/null
+		rm -f "${HOME:-/root}"/users.db.bak.* 2>/dev/null
+		rm -f /home/sshplus 2>/dev/null
+
+		rm -rf /var/log/sshplus /tmp/sshplus-install.log 2>/dev/null
+
+		crontab -l 2>/dev/null | grep -v -F \
+			-e '/bin/verifatt' \
+			-e '@reboot /etc/autostart' \
+			-e '* * * * * /etc/autostart' \
+			-e '/bin/uexpired' \
+			| crontab - 2>/dev/null
+
+		if [[ -x /usr/sbin/ufw ]]; then
+			/usr/sbin/ufw delete allow 3128/tcp >/dev/null 2>&1
+			/usr/sbin/ufw delete allow 8799/tcp >/dev/null 2>&1
+		fi
+
+		msg_ok "Script ve kurulu tüm dosyalar tamamen kaldırıldı."
+		sleep 3
+		exit 0
+	fi
+fi
+color_echo "Kaldırma işlemi iptal edildi." "green"
+sleep 2

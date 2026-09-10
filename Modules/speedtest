@@ -1,0 +1,173 @@
+#!/bin/bash
+
+if [[ -f "/etc/SSHPlus/colors" ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f "/bin/colors" ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+OOKLA_BIN="/usr/local/bin/ookla-speedtest"
+
+run_speedtest() {
+	local out_png="$HOME/speed_png" out_down="$HOME/speed_down" out_upl="$HOME/speed_upl" out_lnk="$HOME/speed_lnk" out_err="$HOME/speed_err"
+	echo "N/A" >"$out_png"
+	echo "N/A" >"$out_down"
+	echo "N/A" >"$out_upl"
+	echo "N/A" >"$out_lnk"
+	: >"$out_err"
+	if ! command -v "$OOKLA_BIN" >/dev/null 2>&1; then
+		echo "SPEEDTEST_CLI_MISSING" >"$out_lnk"
+		return 1
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "JQ_MISSING" >"$out_lnk"
+		return 1
+	fi
+	local raw
+	raw=$("$OOKLA_BIN" --accept-license --accept-gdpr -f json 2>"$out_err") || true
+	if [[ -z "$raw" ]]; then
+		echo "SPEEDTEST_CLI_FAIL" >"$out_lnk"
+		return 1
+	fi
+	local ping down_bw upl_bw down_mbps upl_mbps server_name url
+	ping=$(echo "$raw" | jq -r '.ping.latency // empty')
+	down_bw=$(echo "$raw" | jq -r '.download.bandwidth // empty')
+	upl_bw=$(echo "$raw" | jq -r '.upload.bandwidth // empty')
+	server_name=$(echo "$raw" | jq -r '.server.name // empty')
+	url=$(echo "$raw" | jq -r '.result.url // empty')
+	if [[ -z "$ping" || -z "$down_bw" || -z "$upl_bw" ]]; then
+		echo "SPEEDTEST_CLI_FAIL" >"$out_lnk"
+		return 1
+	fi
+	printf "%.2f ms\n" "$ping" >"$out_png"
+	down_mbps=$(echo "$down_bw" | awk '{printf "%.2f", $1 * 8 / 1000000}')
+	upl_mbps=$(echo "$upl_bw" | awk '{printf "%.2f", $1 * 8 / 1000000}')
+	echo "${down_mbps} Mbps" >"$out_down"
+	echo "${upl_mbps} Mbps" >"$out_upl"
+	if [[ -n "$url" ]]; then
+		echo "$url" >"$out_lnk"
+	else
+		echo "ookla-speedtest${server_name:+ (${server_name})}" >"$out_lnk"
+	fi
+	[[ -s "$out_png" ]] || echo "N/A" >"$out_png"
+	[[ -s "$out_down" ]] || echo "N/A" >"$out_down"
+	[[ -s "$out_upl" ]] || echo "N/A" >"$out_upl"
+	return 0
+}
+
+show_progress() {
+	yellow_code=$(get_color_code "yellow")
+	red_code=$(get_color_code "red")
+	white_code=$(get_color_code "white")
+	green_code=$(get_color_code "green")
+	reset_code=$(get_reset_code)
+	tput civis 2>/dev/null
+	echo -ne "  ${yellow_code}BEKLEYİN ${white_code}- ${yellow_code}["
+	while [[ ! -e $HOME/fim ]]; do
+		for ((i = 0; i < 18; i++)); do
+			echo -ne "${red_code}#"
+			sleep 0.1
+		done
+		[[ -e $HOME/fim ]] && break
+		echo -e "${yellow_code}]"
+		sleep 1
+		tput cuu1 2>/dev/null
+		tput dl1 2>/dev/null
+		echo -ne "  ${yellow_code}BEKLEYİN ${white_code}- ${yellow_code}["
+	done
+	[[ -e $HOME/fim ]] && rm -f $HOME/fim
+	echo -e "${yellow_code}]${white_code} -${green_code} TAMAM !${reset_code}"
+	tput cnorm 2>/dev/null
+}
+
+echo ""
+color_echo "   SUNUCU HIZI TEST EDİLİYOR !" "green"
+echo ""
+[[ -e $HOME/fim ]] && rm -f $HOME/fim
+( run_speedtest; touch $HOME/fim ) &
+show_progress
+echo ""
+
+lnk="N/A"
+[[ -f $HOME/speed_lnk ]] && [[ -s $HOME/speed_lnk ]] && lnk=$(cat $HOME/speed_lnk)
+
+if [[ "$lnk" == "JQ_MISSING" ]]; then
+	msg_err "Ookla Speedtest CLI çıktısını ayrıştırmak için jq gereklidir ancak kurulu değil."
+	color_echo "Kurmak için:  apt install jq" "yellow"
+	echo ""
+	color_echo_n "Devam etmek için ENTER'a basın..." "yellow"
+	read -r
+	rm -f $HOME/speed_png $HOME/speed_down $HOME/speed_upl $HOME/speed_lnk $HOME/speed_err 2>/dev/null
+	exit 0
+fi
+
+if [[ "$lnk" == "SPEEDTEST_CLI_MISSING" ]]; then
+	msg_err "Ookla Speedtest CLI gereklidir ancak kurulu değil."
+	if [[ "$(id -u)" -eq 0 ]]; then
+		color_echo "Ookla Speedtest CLI kurulmaya çalışılıyor..." "yellow"
+		echo ""
+		case "$(uname -m)" in
+			x86_64) arch="x86_64" ;;
+			aarch64|arm64) arch="aarch64" ;;
+			armv7l) arch="armhf" ;;
+			*) arch="" ;;
+		esac
+		tmp=$(mktemp -d)
+		if [[ -z "$arch" ]]; then
+			msg_err "Desteklenmeyen mimari: $(uname -m)"
+		elif curl -fsSL "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${arch}.tgz" -o "$tmp/speedtest.tgz" 2>/dev/null \
+			&& tar -xzf "$tmp/speedtest.tgz" -C "$tmp" speedtest \
+			&& install -m 0755 "$tmp/speedtest" /usr/local/bin/ookla-speedtest; then
+			msg_ok "Ookla Speedtest CLI kuruldu. [09] SPEEDTEST'ı tekrar çalıştırın."
+		else
+			msg_err "Otomatik kurulum başarısız oldu."
+			color_echo "Manuel olarak şuradan kurun: https://www.speedtest.net/apps/cli" "cyan"
+		fi
+		rm -rf "$tmp"
+	else
+		color_echo "Manuel olarak şuradan kurun: https://www.speedtest.net/apps/cli" "yellow"
+	fi
+	echo ""
+	color_echo_n "Devam etmek için ENTER'a basın..." "yellow"
+	read -r
+	rm -f $HOME/speed_png $HOME/speed_down $HOME/speed_upl $HOME/speed_lnk $HOME/speed_err 2>/dev/null
+	exit 0
+fi
+
+if [[ "$lnk" == "SPEEDTEST_CLI_FAIL" ]]; then
+	msg_err "Ookla Speedtest CLI çalıştı ancak çıktı üretmedi (ağ, lisans onayı veya yapılandırma sorunu)."
+	[[ -f $HOME/speed_err ]] && [[ -s $HOME/speed_err ]] && { color_echo "Hata çıktısı:" "yellow"; sed 's/^/  /' "$HOME/speed_err" | head -20; echo ""; }
+	color_echo "speedtest.net bağlantısını kontrol edip tekrar deneyin." "cyan"
+	echo ""
+	color_echo_n "Devam etmek için ENTER'a basın..." "yellow"
+	read -r
+	rm -f $HOME/speed_png $HOME/speed_down $HOME/speed_upl $HOME/speed_lnk $HOME/speed_err 2>/dev/null
+	exit 0
+fi
+
+png="N/A"; down="N/A"; upl="N/A"
+[[ -f $HOME/speed_png ]] && [[ -s $HOME/speed_png ]] && png=$(cat $HOME/speed_png)
+[[ -f $HOME/speed_down ]] && [[ -s $HOME/speed_down ]] && down=$(cat $HOME/speed_down)
+[[ -f $HOME/speed_upl ]] && [[ -s $HOME/speed_upl ]] && upl=$(cat $HOME/speed_upl)
+
+blue_code=$(get_color_code "blue")
+green_code=$(get_color_code "green")
+white_code=$(get_color_code "white")
+cyan_code=$(get_color_code "cyan")
+reset_code=$(get_reset_code)
+echo -e "${blue_code}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset_code}"
+color_echo_n "PING (GECİKME):" "green"
+color_echo "$png" "white"
+color_echo_n "İNDİRME:" "green"
+color_echo "$down" "white"
+color_echo_n "YÜKLEME:" "green"
+color_echo "$upl" "white"
+color_echo_n "BAĞLANTI: " "green"
+color_echo "$lnk" "cyan"
+echo -e "${blue_code}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset_code}"
+echo ""
+color_echo_n "Devam etmek için ENTER'a basın..." "yellow"
+read -r
+rm -f "$HOME/speed" "$HOME/speed_png" "$HOME/speed_down" "$HOME/speed_upl" "$HOME/speed_lnk" "$HOME/speed_err" 2>/dev/null

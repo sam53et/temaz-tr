@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+sshplus_users_db_path() { printf "%s/users.db" "${HOME:-/root}"; }
+sshplus_sessions_log_path() { printf "%s/sessions.log" "${HOME:-/root}"; }
+
+_sshplus_db_lock_path() { printf "%s/users.db.lock" "${HOME:-/root}"; }
+_sshplus_db_lock_dir() { printf "%s/users.db.lock.d" "${HOME:-/root}"; }
+
+sshplus_now_date() { date +%F; }
+sshplus_now_iso()  { date -Iseconds 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S%z"; }
+
+sshplus_is_int() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
+sshplus_is_date_or_never() {
+  local d="${1:-}"
+  [[ "$d" == "never" ]] && return 0
+  [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  date -d "$d" +%F >/dev/null 2>&1
+}
+sshplus_is_iso_or_never() {
+  local s="${1:-}"
+  [[ "$s" == "never" ]] && return 0
+  [[ "$s" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
+  return 0
+}
+
+sshplus_db_init() {
+  local db log header firstline tmp
+  db="$(sshplus_users_db_path)"
+  log="$(sshplus_sessions_log_path)"
+  header="# username connection_limit expiration_date registration_date total_traffic_upload total_traffic_download last_connection_traffic latest_connection_date password"
+  if [[ -f "$db" ]]; then
+    firstline=$(head -1 "$db" 2>/dev/null)
+    if [[ -n "$firstline" && "${firstline:0:1}" != "#" ]]; then
+      tmp="$(mktemp "${db}.header.XXXXXX" 2>/dev/null || echo "${db}.header.$$")"
+      { printf '%s\n' "$header"; cat "$db"; } > "$tmp" 2>/dev/null && mv -f "$tmp" "$db" 2>/dev/null || true
+    fi
+  else
+    mkdir -p "$(dirname "$db")" 2>/dev/null || true
+    printf '%s\n' "$header" > "$db"
+    chmod 600 "$db" 2>/dev/null || true
+  fi
+  [[ -f "$log" ]] || { mkdir -p "$(dirname "$log")" 2>/dev/null || true; : > "$log"; chmod 600 "$log" 2>/dev/null || true; }
+}
+
+_sshplus_lock_acquire() {
+  sshplus_db_init
+  if command -v flock >/dev/null 2>&1; then
+    exec 200> "$(_sshplus_db_lock_path)" || return 1
+    flock -x 200
+    return $?
+  fi
+  local d="$(_sshplus_db_lock_dir)" i
+  for ((i=0; i<200; i++)); do
+    mkdir "$d" 2>/dev/null && return 0
+    sleep 0.02
+  done
+  return 1
+}
+_sshplus_lock_release() {
+  if command -v flock >/dev/null 2>&1; then
+    flock -u 200 2>/dev/null || true
+    return 0
+  fi
+  rmdir "$(_sshplus_db_lock_dir)" 2>/dev/null || true
+}
+
+sshplus_with_db_lock() {
+  _sshplus_lock_acquire || return 1
+  "$@"
+  local rc=$?
+  _sshplus_lock_release || true
+  return $rc
+}
+
+sshplus_db_get_line() {
+  local u="${1:-}" db
+  db="$(sshplus_users_db_path)"
+  [[ -z "$u" ]] && return 1
+  grep -m1 -E "^${u}[[:space:]]" "$db" 2>/dev/null | head -1 || true
+}
+
+sshplus_db_user_exists() {
+  local u="${1:-}"
+  [[ -n "$(sshplus_db_get_line "$u")" ]]
+}
+
+sshplus_db_put_user() {
+  local u="${1:-}" lim="${2:-}" exp="${3:-}" reg="${4:-}" tot_up="${5:-0}" tot_down="${6:-0}" last="${7:-0}" latest="${8:-never}" pass="${9:-}"
+  local db tmp
+  db="$(sshplus_users_db_path)"
+
+  [[ -z "$u" ]] && return 1
+  sshplus_is_int "$lim" || return 1
+  sshplus_is_date_or_never "$exp" || return 1
+  sshplus_is_date_or_never "$reg" || return 1
+  sshplus_is_int "${tot_up:-0}" || tot_up=0
+  sshplus_is_int "${tot_down:-0}" || tot_down=0
+  sshplus_is_int "${last:-0}" || last=0
+  sshplus_is_iso_or_never "$latest" || return 1
+
+  tmp="$(mktemp "${db}.tmp.XXXXXX" 2>/dev/null || echo "${db}.tmp.$$")"
+  awk -v u="$u" '$1=="#" || !(NF && $1==u)' "$db" 2>/dev/null > "$tmp" || : > "$tmp"
+  printf "%s %s %s %s %s %s %s %s %s\n" "$u" "$lim" "$exp" "$reg" "$tot_up" "$tot_down" "$last" "$latest" "$pass" >> "$tmp"
+  mv -f "$tmp" "$db"
+}
+
+sshplus_db_remove_user() {
+  local u="${1:-}" db tmp
+  db="$(sshplus_users_db_path)"
+  [[ -z "$u" ]] && return 1
+  tmp="$(mktemp "${db}.tmp.XXXXXX" 2>/dev/null || echo "${db}.tmp.$$")"
+  awk -v u="$u" '$1=="#" || !(NF && $1==u)' "$db" 2>/dev/null > "$tmp" || : > "$tmp"
+  mv -f "$tmp" "$db"
+}
+
+sshplus_db_clear() {
+  local db header
+  db="$(sshplus_users_db_path)"
+  header="# username connection_limit expiration_date registration_date total_traffic_upload total_traffic_download last_connection_traffic latest_connection_date password"
+  printf '%s\n' "$header" > "$db"
+}
+
+sshplus_db_ensure_user() {
+  local u="${1:-}"
+  [[ -z "$u" ]] && return 1
+  sshplus_db_user_exists "$u" && return 0
+
+  local exp="never"
+  exp="$(chage -l "$u" 2>/dev/null | awk -F: '/Account expires/{gsub(/^[ \t]+/,"",$2); print $2; exit}')"
+  [[ -z "$exp" || "$exp" == "never" ]] && exp="never" || exp="$(date -d "$exp" +%F 2>/dev/null || echo "never")"
+
+  sshplus_db_put_user "$u" 1 "$exp" "$(sshplus_now_date)" 0 0 0 "never" "(not set)"
+}
+
+sshplus_db_parse_line() {
+  local line="${1:-}"
+  awk '
+    NF >= 9 { rest = $9; for (i = 10; i <= NF; i++) rest = rest " " $i; printf "%s %s %s %s %s %s %s %s\t%s\n", $1, $2, $3, $4, $5+0, $6+0, $7+0, $8, rest; next }
+    NF == 8 { printf "%s %s %s %s %s %s %s %s\t%s\n", $1, $2, $3, $4, $5+0, 0, $6+0, $7, $8; next }
+    { printf "%s %s %s %s 0 0 0 never\t\n", $1, $2, $3, $4 }
+  ' <<<"$line"
+}
+
+sshplus_db_set_limit() {
+  local u="${1:-}" new_lim="${2:-}" line part1 pass
+  sshplus_is_int "$new_lim" || return 1
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+  IFS=$'\t' read -r part1 pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  sshplus_db_put_user "$u" "$new_lim" "$exp" "$reg" "$tot_up" "$tot_down" "$last" "$latest" "$pass"
+}
+
+sshplus_db_set_expiration() {
+  local u="${1:-}" new_exp="${2:-}" line part1 pass
+  sshplus_is_date_or_never "$new_exp" || return 1
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+  IFS=$'\t' read -r part1 pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  sshplus_db_put_user "$u" "$lim" "$new_exp" "$reg" "$tot_up" "$tot_down" "$last" "$latest" "$pass"
+}
+
+sshplus_db_start_session() {
+  local u="${1:-}" start_iso="${2:-}" line part1 pass
+  sshplus_is_iso_or_never "$start_iso" || return 1
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+  IFS=$'\t' read -r part1 pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  sshplus_db_put_user "$u" "$lim" "$exp" "$reg" "$tot_up" "$tot_down" 0 "$start_iso" "$pass"
+}
+
+sshplus_db_add_traffic() {
+  local u="${1:-}" delta_bytes="${2:-}" session_bytes="${3:-}" line part1 pass
+  sshplus_is_int "${delta_bytes:-0}" || delta_bytes=0
+  sshplus_is_int "${session_bytes:-0}" || session_bytes=0
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+  IFS=$'\t' read -r part1 pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  tot_up=$(( ${tot_up:-0} + ${delta_bytes:-0} ))
+  tot_down=$(( ${tot_down:-0} + ${session_bytes:-0} ))
+  sshplus_db_put_user "$u" "$lim" "$exp" "$reg" "$tot_up" "$tot_down" "$session_bytes" "$latest" "$pass"
+}
+
+sshplus_db_set_latest_connection() {
+  local u="${1:-}" latest_iso="${2:-}" line part1 pass
+  sshplus_is_iso_or_never "$latest_iso" || return 1
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+  IFS=$'\t' read -r part1 pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  sshplus_db_put_user "$u" "$lim" "$exp" "$reg" "$tot_up" "$tot_down" "$last" "$latest_iso" "$pass"
+}
+
+update_user_usage_db() {
+  local db_path="${1:-}" username="${2:-}" upload_bytes="${3:-0}" download_bytes="${4:-0}" timestamp="${5:-never}"
+  local tmp
+  [[ -n "$db_path" ]] || return 1
+  [[ -n "$username" ]] || return 1
+  upload_bytes=$(( upload_bytes + 0 ))
+  download_bytes=$(( download_bytes + 0 ))
+  tmp="$(mktemp "${db_path}.tmp.XXXXXX" 2>/dev/null || echo "${db_path}.tmp.$$")"
+  awk -v u="$username" -v up="$upload_bytes" -v down="$download_bytes" -v ts="$timestamp" '
+    BEGIN { found = 0 }
+    $1 == "#" { print; next }
+    $1 == u {
+      found = 1
+      old_up = $5 + 0
+      old_down = $6 + 0
+      new_up = old_up + up
+      new_down = old_down + down
+      last_traffic = up + down
+      rest = (NF >= 9) ? $9 : $8
+      if (NF >= 9) for (i = 10; i <= NF; i++) rest = rest " " $i
+      printf "%s %s %s %s %s %s %s %s %s\n", $1, $2, $3, $4, new_up, new_down, last_traffic, ts, rest
+      next
+    }
+    { print }
+    END { if (!found) exit 1 }
+  ' "$db_path" 2>/dev/null > "$tmp"
+  if [[ $? -ne 0 ]]; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  mv -f "$tmp" "$db_path" 2>/dev/null || return 1
+  return 0
+}
+
+sshplus_set_system_password() {
+  local u="${1:-}" pass="${2:-}"
+  [[ -z "$u" || -z "$pass" ]] && return 1
+  printf "%s:%s\n" "$u" "$pass" | chpasswd >/dev/null 2>&1
+}
+
+sshplus_db_set_password() {
+  local u="${1:-}" pass="${2:-}" line
+  [[ -z "$u" ]] && return 1
+  sshplus_db_ensure_user "$u" || true
+  line="$(sshplus_db_get_line "$u")"
+  [[ -z "$line" ]] && return 1
+
+  sshplus_set_system_password "$u" "$pass" || return 1
+
+  local part1 _pass
+  IFS=$'\t' read -r part1 _pass <<<"$(sshplus_db_parse_line "$line")"
+  local _u lim exp reg tot_up tot_down last latest
+  read -r _u lim exp reg tot_up tot_down last latest <<<"$part1"
+  sshplus_db_put_user "$u" "$lim" "$exp" "$reg" "$tot_up" "$tot_down" "$last" "$latest" "$pass"
+}
+
+sshplus_log_session() {
+  local start="${1:-}" end="${2:-}" delta="${3:-}" u="${4:-}" ip="${5:-}" banner="${6:-}" bytes="${7:-}"
+  local log
+  log="$(sshplus_sessions_log_path)"
+  sshplus_db_init
+  local log_ip_banner=1
+  if [[ -f /etc/SSHPlus/privacy.conf ]]; then
+    . /etc/SSHPlus/privacy.conf 2>/dev/null || true
+  fi
+  if [[ "${LOG_IP_BANNER:-1}" -ne 1 ]]; then
+    ip="hidden"
+    banner="hidden"
+  fi
+  banner="${banner//[[:space:]]/_}"
+  ip="${ip//[[:space:]]/}"
+  sshplus_is_int "${bytes:-0}" || bytes=0
+  [[ -z "$start" || -z "$end" || -z "$u" ]] && return 1
+  printf "%s %s %s %s %s %s %s\n" "$start" "$end" "$delta" "$u" "${ip:-unknown}" "${banner:-unknown}" "$bytes" >> "$log" 2>/dev/null || true
+  return 0
+}
+

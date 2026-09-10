@@ -1,0 +1,296 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+SERVER_NAME_FILE="$(dirname "$0")/SERVER_NAME"
+PRIVACY_CONF="/etc/SSHPlus/privacy.conf"
+
+change_root_password() {
+	clear
+	banner_info "         ROOT PAROLASINI DEĞİŞTİR           "
+	echo ""
+	color_echo_n "Yeni root parolasını girin: " "yellow"
+	read -r -s new_pass
+	echo ""
+	color_echo_n "Yeni root parolasını onaylayın: " "yellow"
+	read -r -s confirm_pass
+	echo ""
+
+	if [[ -z "$new_pass" ]]; then
+		msg_err "Parola boş olamaz!"
+		sleep 2
+		return 1
+	fi
+	if [[ "$new_pass" != "$confirm_pass" ]]; then
+		msg_err "Parolalar eşleşmiyor!"
+		sleep 2
+		return 1
+	fi
+	if [[ ${#new_pass} -lt 4 ]]; then
+		msg_err "Parola en az 4 karakter olmalıdır!"
+		sleep 2
+		return 1
+	fi
+
+	if echo "root:$new_pass" | chpasswd 2>/dev/null; then
+		msg_ok "Root parolası başarıyla değiştirildi!"
+	else
+		msg_err "Root parolası değiştirilemedi. Root olarak çalıştırın."
+	fi
+	sleep 2
+}
+
+change_timezone() {
+	clear
+	banner_info "         TARİH/SAAT VE ZAMAN DİLİMİ           "
+	echo ""
+	local current_tz="unknown"
+	if command -v timedatectl >/dev/null 2>&1; then
+		current_tz=$(timedatectl 2>/dev/null | awk -F': ' '/Time zone/ {print $2}' | awk '{print $1}')
+	elif [[ -L /etc/localtime ]]; then
+		current_tz=$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')
+	fi
+	color_echo "Mevcut zaman dilimi: ${current_tz}" "cyan"
+	local default_tz="Asia/Tehran"
+	echo ""
+	color_echo_n "Zaman dilimini girin (örn. Europe/Istanbul) " "green"
+	color_echo_n "[${default_tz}]: " "yellow"
+	read -r tz
+	[[ -z "$tz" ]] && tz="$default_tz"
+
+	if command -v timedatectl >/dev/null 2>&1; then
+		if timedatectl list-timezones 2>/dev/null | grep -qx "$tz"; then
+			if timedatectl set-timezone "$tz" >/dev/null 2>&1; then
+				msg_ok "Zaman dilimi $tz olarak ayarlandı"
+			else
+				msg_err "Zaman dilimi ayarlanamadı. Root olarak çalıştırın."
+			fi
+		else
+			msg_err "Geçersiz zaman dilimi: $tz"
+		fi
+	else
+		if [[ -f "/usr/share/zoneinfo/$tz" ]]; then
+			if ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime 2>/dev/null; then
+				msg_ok "Zaman dilimi $tz olarak ayarlandı (/etc/localtime üzerinden)"
+			else
+				msg_err "Zaman dilimi ayarlanamadı. Root olarak çalıştırın."
+			fi
+		else
+			msg_err "Zaman dilimi dosyası bulunamadı: /usr/share/zoneinfo/$tz"
+		fi
+	fi
+	sleep 2
+}
+
+change_keyboard_layout() {
+	clear
+	banner_info "          KLAVYE DÜZENİ              "
+	echo ""
+	local current="unknown"
+	if command -v localectl >/dev/null 2>&1; then
+		current=$(localectl status 2>/dev/null | awk -F':' '/VC Keymap/ {gsub(/^ +/,"",$2); print $2}' | head -1)
+	fi
+	color_echo "Mevcut düzen: ${current}" "cyan"
+	local default_layout="us"
+	echo ""
+	color_echo_n "Klavye düzenini girin (örn. tr, us) " "green"
+	color_echo_n "[${default_layout}]: " "yellow"
+	read -r layout
+	[[ -z "$layout" ]] && layout="$default_layout"
+
+	if command -v localectl >/dev/null 2>&1; then
+		if localectl set-keymap "$layout" >/dev/null 2>&1 || localectl set-x11-keymap "$layout" >/dev/null 2>&1; then
+			msg_ok "Klavye düzeni $layout olarak ayarlandı"
+		else
+			msg_err "localectl ile düzen ayarlanamadı. Root olarak çalıştırın."
+		fi
+	else
+		if command -v loadkeys >/dev/null 2>&1; then
+			if loadkeys "$layout" >/dev/null 2>&1; then
+				msg_ok "Klavye düzeni yüklendi: $layout"
+			else
+				msg_err "loadkeys ile düzen yüklenemedi. Düzen geçersiz olabilir."
+			fi
+		else
+			msg_err "localectl veya loadkeys bulunamadı; düzen değiştirilemiyor."
+		fi
+	fi
+	sleep 2
+}
+
+_suggest_server_line() {
+	[[ ! -f "$SERVER_NAME_FILE" ]] && return 0
+	local candidates line
+	candidates=$(grep -Ev '^[#\-=+/]' "$SERVER_NAME_FILE" 2>/dev/null | sed '/^[[:space:]]*$/d')
+	[[ -z "$candidates" ]] && return 0
+	if command -v shuf >/dev/null 2>&1; then
+		line=$(printf '%s\n' "$candidates" | shuf -n 1)
+	else
+		line=$(printf '%s\n' "$candidates" | head -1)
+	fi
+	printf '%s\n' "$line"
+}
+
+change_server_name() {
+	clear
+	banner_info "             SUNUCU ADI               "
+	echo ""
+	local current
+	current=$(hostname 2>/dev/null || echo "unknown")
+	color_echo "Mevcut sunucu adı: ${current}" "cyan"
+	local suggested_line suggested role intro
+	suggested_line=$(_suggest_server_line)
+	if [[ -n "$suggested_line" ]]; then
+		suggested=$(printf '%s\n' "$suggested_line" | awk -F'::' '{gsub(/^[ \t]+|[ \t]+$/,"",$1); print $1}')
+		role=$(printf '%s\n' "$suggested_line" | awk -F'::' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
+		intro=$(printf '%s\n' "$suggested_line" | awk -F'::' '{gsub(/^[ \t]+|[ \t]+$/,"",$3); print $3}')
+	else
+		suggested="$current"
+	fi
+	if [[ -n "$role" ]]; then
+		color_echo "Önerilen: ${suggested} — ${role}" "cyan"
+	else
+		color_echo "Önerilen: ${suggested}" "cyan"
+	fi
+	if [[ -n "$intro" ]]; then
+		color_echo "  ${intro}" "white"
+	fi
+	echo ""
+	color_echo_n "Sunucu adı " "green"
+	color_echo_n "[${suggested}]: " "yellow"
+	read -r new_name
+	[[ -z "$new_name" ]] && new_name="$suggested"
+	if [[ -z "$new_name" ]]; then
+		msg_err "Sunucu adı boş olamaz."
+		sleep 2
+		return 1
+	fi
+
+	if [[ -f "$SERVER_NAME_FILE" ]]; then
+		if awk -F'::' -v n="$new_name" 'BEGIN{IGNORECASE=1; found=0}
+			{
+				gsub(/^[ \t]+|[ \t]+$/,"",$1);
+				if ($1 == n) { found=1; exit }
+			}
+			END{ exit found?0:1 }' "$SERVER_NAME_FILE"; then
+			msg_warn "'${new_name}' sunucu adı SERVER_NAME listesinde zaten mevcut."
+			echo ""
+		fi
+	fi
+
+	if command -v hostnamectl >/dev/null 2>&1; then
+		if hostnamectl set-hostname "$new_name" >/dev/null 2>&1; then
+			msg_ok "Sunucu adı $new_name olarak ayarlandı"
+		else
+			msg_err "Sunucu adı ayarlanamadı. Root olarak çalıştırın."
+		fi
+	else
+		echo "$new_name" >/etc/hostname 2>/dev/null || true
+		if hostname "$new_name" >/dev/null 2>&1; then
+			msg_ok "Sunucu adı $new_name olarak ayarlandı"
+		else
+			msg_err "Sunucu adı ayarlanamadı. Root olarak çalıştırın."
+		fi
+	fi
+	sleep 2
+}
+
+configure_privacy_logging() {
+	clear
+	banner_info "        GİZLİLİK VE OTURUM KAYITLARI         "
+	echo ""
+	local current="enabled"
+	if [[ -f "$PRIVACY_CONF" ]]; then
+		. "$PRIVACY_CONF" 2>/dev/null || true
+	fi
+	if [[ "${LOG_IP_BANNER:-1}" -eq 0 ]]; then
+		current="disabled"
+	fi
+	color_echo "Mevcut ayar: IP ve banner kaydı ${current}" "cyan"
+	echo ""
+	color_echo_n "Oturumlar için IP ve banner kaydedilsin mi? [E/h]: " "yellow"
+	read -r ans
+	local new_val=1
+	if [[ "$ans" =~ ^[Nn]$ ]]; then
+		new_val=0
+	fi
+	mkdir -p /etc/SSHPlus 2>/dev/null || true
+	printf 'LOG_IP_BANNER=%s\n' "$new_val" > "$PRIVACY_CONF" 2>/dev/null || true
+	if [[ $new_val -eq 1 ]]; then
+		msg_ok "Oturum kayıtları IP ve istemci bannerını içerecek (mevcutsa)."
+	else
+		msg_ok "Oturum kayıtları gizlilik için IP ve banner bilgisini gizleyecek."
+	fi
+	sleep 2
+}
+
+configure_refresh_interval() {
+	clear
+	banner_info "      OTOMATİK YENİLEME ARALIĞI            "
+	echo ""
+	local config_file="/etc/SSHPlus/refresh_interval"
+	local current_interval=30
+	if [[ -f "$config_file" ]] && [[ -s "$config_file" ]]; then
+		local interval
+		interval=$(tr -d '\r\n' < "$config_file" 2>/dev/null | grep -E '^[0-9]+$' | head -1)
+		[[ -n "$interval" ]] && [[ "$interval" -ge 5 ]] && [[ "$interval" -le 300 ]] && current_interval="$interval"
+	fi
+	color_echo "Mevcut yenileme aralığı: ${current_interval} saniye" "cyan"
+	echo ""
+	color_echo "Bu ayar, ana menü ve kullanıcı izleme ekranının ne sıklıkla otomatik yenileneceğini belirler." "white"
+	color_echo "Düşük değerler (5-15s) daha sık güncelleme sağlar ancak CPU kullanımını artırır." "white"
+	color_echo "Yüksek değerler (30-60s) yükü azaltır ancak güncellemeler daha seyrek olur." "white"
+	echo ""
+	color_echo_n "Yenileme aralığını saniye cinsinden girin [5-300, varsayılan: 30]: " "yellow"
+	read -r new_interval
+	if [[ -z "$new_interval" ]]; then
+		new_interval=30
+	elif ! [[ "$new_interval" =~ ^[0-9]+$ ]]; then
+		msg_err "Geçersiz giriş. 5 ile 300 arasında bir sayı olmalıdır."
+		sleep 2
+		return 1
+	elif [[ "$new_interval" -lt 5 ]] || [[ "$new_interval" -gt 300 ]]; then
+		msg_err "Aralık 5 ile 300 saniye arasında olmalıdır."
+		sleep 2
+		return 1
+	fi
+	mkdir -p /etc/SSHPlus 2>/dev/null || true
+	printf '%s\n' "$new_interval" > "$config_file" 2>/dev/null || true
+	msg_ok "Yenileme aralığı ${new_interval} saniye olarak ayarlandı. Değişiklikler hemen etkili olur."
+	sleep 2
+}
+
+while true; do
+	clear
+	banner_info "             SUNUCU AYARLARI           "
+	echo ""
+	menu_option 1 "Root parolasını değiştir"
+	menu_option 2 "Tarih/saat ve zaman dilimi"
+	menu_option 3 "Klavye düzeni"
+	menu_option 4 "Sunucu adı"
+	menu_option 5 "Gizlilik (IP ve banner kaydı)"
+	menu_option 6 "Otomatik yenileme aralığı"
+	menu_option 0 "Geri"
+	menu_option 00 "Çıkış"
+	echo ""
+	color_echo_n "Seçenek belirleyin [0/00]: " "green"
+	read -r opt
+	case "$opt" in
+		1) change_root_password ;;
+		2) change_timezone ;;
+		3) change_keyboard_layout ;;
+		4) change_server_name ;;
+		5) configure_privacy_logging ;;
+		6) configure_refresh_interval ;;
+		0) exit 0 ;;
+		00) exit 99 ;;
+		*) msg_err "Geçersiz seçenek!"; sleep 2 ;;
+	esac
+done
+

@@ -1,0 +1,54 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if [[ -f /etc/SSHPlus/db ]]; then
+	source /etc/SSHPlus/db
+elif [[ -f /bin/db ]]; then
+	source /bin/db
+elif [[ -f "$(dirname "$0")/db" ]]; then
+	source "$(dirname "$0")/db"
+fi
+
+banner_info "            KULLANICI YEDEĞİ                 "
+echo ""
+backup_dir="${HOME:-/root}"
+stamp=$(date +%Y%m%d_%H%M%S)
+out="${backup_dir}/sshplus_backup_${stamp}.txt"
+db="$(sshplus_users_db_path 2>/dev/null || echo "${HOME:-/root}/users.db")"
+log="$(sshplus_sessions_log_path 2>/dev/null || echo "${HOME:-/root}/sessions.log")"
+
+{
+	echo "# SSHPlus kullanıcı yedeği - $stamp"
+	echo "# Merkezi veritabanı formatı (boşlukla ayrılmış; 8 alan):"
+	echo "# kullanıcı_adı bağlantı_limiti bitiş_tarihi kayıt_tarihi toplam_trafik son_bağlantı_trafiği son_bağlantı_tarihi parola"
+	echo ""
+	echo "## users.db"
+	if [[ -f "$db" ]] && [[ -s "$db" ]]; then
+		cat "$db"
+	else
+		echo "# (boş veya bulunamadı) $db"
+	fi
+	echo ""
+	echo "## sessions.log (last 500 lines)"
+	if [[ -f "$log" ]] && [[ -s "$log" ]]; then
+		tail -n 500 "$log" 2>/dev/null || cat "$log"
+	else
+		echo "# (boş veya bulunamadı) $log"
+	fi
+} >"$out" 2>/dev/null
+
+if [[ -f "$out" ]] && [[ -s "$out" ]]; then
+	msg_ok "Yedek şuraya kaydedildi: $out"
+	color_echo "Dosya: $out" "cyan"
+else
+	msg_err "Yedek dosyası oluşturulamadı."
+fi
+echo ""
+sleep 2

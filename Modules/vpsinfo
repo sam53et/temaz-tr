@@ -1,0 +1,162 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if [[ -f /etc/SSHPlus/db ]]; then
+	source /etc/SSHPlus/db
+elif [[ -f /bin/db ]]; then
+	source /bin/db
+elif [[ -f "$(dirname "$0")/db" ]]; then
+	source "$(dirname "$0")/db"
+fi
+
+g=$(get_color_code "green")
+w=$(get_color_code "white")
+bl=$(get_color_code "blue")
+reset=$(get_reset_code)
+
+fmt_bytes_compact() {
+	awk -v b="${1:-0}" 'BEGIN{
+		if(b>=1073741824) printf "%.1fG", b/1073741824
+		else if(b>=1048576) printf "%.1fM", b/1048576
+		else if(b>=1024) printf "%.0fK", b/1024
+		else printf "%dB", b+0
+	}'
+}
+
+clear
+_hn=$(hostname 2>/dev/null || echo "N/A")
+if [[ -f /etc/IP ]] && [[ -s /etc/IP ]]; then
+	_ip4=$(cat /etc/IP)
+else
+	_ip4=$(hostname -I 2>/dev/null | awk '{print $1}')
+	[[ -z "$_ip4" ]] && _ip4="N/A"
+fi
+_ip6=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i~/:/) print $i}' | head -1)
+[[ -z "$_ip6" ]] && _ip6="N/A"
+if [[ -f /etc/os-release ]]; then
+	_os=$(grep -E ^PRETTY_NAME= /etc/os-release 2>/dev/null | cut -d'"' -f2)
+else
+	_os=$(cut -d' ' -f1,2 /etc/issue.net 2>/dev/null | head -1)
+fi
+[[ -z "$_os" ]] && _os="N/A"
+_kern=$(uname -r 2>/dev/null || echo "N/A")
+_up=$(uptime -p 2>/dev/null || echo "N/A")
+_ram=$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')
+_ramuse=$(free -m 2>/dev/null | awk 'NR==2{printf "%.1f%%", $3*100/$2}')
+[[ -z "$_ram" ]] && _ram="N/A"
+_cpu=$(nproc 2>/dev/null || grep -c processor /proc/cpuinfo 2>/dev/null)
+_cpuuse=$(top -bn1 2>/dev/null | awk '/Cpu/ { printf "%.1f%%", 100 - $8 }')
+[[ -z "$_cpu" ]] && _cpu="N/A"
+_disk_used=$(df -h / 2>/dev/null | awk 'NR==2{print $3}')
+_disk_total=$(df -h / 2>/dev/null | awk 'NR==2{print $2}')
+_disk_pct=$(df -h / 2>/dev/null | awk 'NR==2{print $5}')
+_ports=$(ss -tuln 2>/dev/null | awk '/LISTEN/ {gsub(/.*:/,"",$5); print $5}' | sort -nu | tr '\n' ' ')
+[[ -z "$_ports" ]] && _ports=$(netstat -tuln 2>/dev/null | awk '/LISTEN/ {gsub(/.*:/,"",$4); print $4}' | sort -nu | tr '\n' ' ')
+[[ -z "$_ports" ]] && _ports="N/A"
+
+_openports_fmt=""
+if command -v ss >/dev/null 2>&1; then
+	while read -r proto state recvq sendq local peer proc; do
+		[[ "$proto" != "tcp" && "$proto" != "udp" ]] && continue
+		port=$(echo "$local" | awk -F: '{print $NF}')
+		svc=$(echo "$proc" | grep -oP '(?<=users:\(\(")[^"]+' | head -1)
+		[[ -z "$svc" ]] && svc="-"
+		_openports_fmt+="  ${bl}$(printf '%-4s' "$proto")${w} $(printf '%-8s' "$port") ${g}${svc}${reset}\n"
+	done < <(ss -tulnp 2>/dev/null | tail -n +2)
+elif command -v netstat >/dev/null 2>&1; then
+	while read -r proto rq sq local foreign state pidprog; do
+		port=$(echo "$local" | awk -F: '{print $NF}')
+		svc=$(echo "$pidprog" | awk -F/ '{print $2}')
+		[[ -z "$svc" ]] && svc="-"
+		_openports_fmt+="  ${bl}$(printf '%-4s' "$proto")${w} $(printf '%-8s' "$port") ${g}${svc}${reset}\n"
+	done < <(netstat -tulnp 2>/dev/null | tail -n +3)
+fi
+[[ -z "$_openports_fmt" ]] && _openports_fmt="  ${g}N/A${reset}\n"
+_net_if=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1)
+if [[ -n "$_net_if" ]] && [[ -f /proc/net/dev ]]; then
+	_rx_mb=$(grep -F "${_net_if}" /proc/net/dev 2>/dev/null | awk '{printf "%.2f", $2/1024/1024}')
+	_tx_mb=$(grep -F "${_net_if}" /proc/net/dev 2>/dev/null | awk '{printf "%.2f", $10/1024/1024}')
+	[[ -n "$_rx_mb" ]] && [[ -n "$_tx_mb" ]] && _net_stats="↓${_rx_mb}MB ↑${_tx_mb}MB"
+fi
+[[ -z "$_net_stats" ]] && _net_stats="N/A"
+_ssh=$(ps -x 2>/dev/null | grep -c '[s]shd.*priv' || true)
+_ssh=${_ssh//[!0-9]/}; [[ -z "$_ssh" ]] && _ssh=0
+_drop=$(ps aux 2>/dev/null | grep -c '[d]ropbear' || true)
+_drop=${_drop//[!0-9]/}; [[ -z "$_drop" ]] && _drop=0
+_drop=$(( _drop > 0 ? _drop - 1 : 0 ))
+_open="N/A"
+_open_num=0
+if [[ -e /etc/openvpn/openvpn-status.log ]]; then
+	_open_num=$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log 2>/dev/null || true)
+	_open_num=${_open_num//[!0-9]/}; [[ -z "$_open_num" ]] && _open_num=0
+	_open="$_open_num"
+fi
+_cons=$(( _ssh + _drop + _open_num ))
+
+_user_db="N/A"; _user_count="0"; _exp_users="0"; _sess_log="N/A"; _sess_count="0"; _sess_bytes="0"; _sess_last="N/A"; _privacy="etkin"
+if type sshplus_users_db_path >/dev/null 2>&1; then
+	_user_db="$(sshplus_users_db_path)"
+	[[ -f "$_user_db" ]] && _user_count=$(wc -l < "$_user_db" 2>/dev/null || echo "0")
+	if [[ -f "$_user_db" ]] && [[ -s "$_user_db" ]]; then
+		now_ts=$(date +%s)
+		while read -r u lim exp reg tot last latest pass; do
+			[[ -z "$exp" || "$exp" == "never" ]] && continue
+			exp_ts=$(date -d "$exp" +%s 2>/dev/null) || continue
+			(( exp_ts <= now_ts )) && _exp_users=$(( _exp_users + 1 ))
+		done < "$_user_db"
+	fi
+fi
+if type sshplus_sessions_log_path >/dev/null 2>&1; then
+	_sess_log="$(sshplus_sessions_log_path)"
+	if [[ -f "$_sess_log" ]] && [[ -s "$_sess_log" ]]; then
+		_sess_count=$(wc -l < "$_sess_log" 2>/dev/null || echo "0")
+		_sess_bytes=$(awk '{s+=$7} END{printf "%.0f", s}' "$_sess_log" 2>/dev/null || echo "0")
+		_sess_last=$(tail -n1 "$_sess_log" 2>/dev/null | awk '{printf "%s %s (%s)", $1,$2,$4}')
+	fi
+fi
+if [[ -f /etc/SSHPlus/privacy.conf ]]; then
+	. /etc/SSHPlus/privacy.conf 2>/dev/null || true
+	[[ "${LOG_IP_BANNER:-1}" -eq 0 ]] && _privacy="devre dışı"
+fi
+
+header_line "VPS BİLGİSİ" "$_hn"
+hr
+echo ""
+section "SİSTEM"
+echo -e "  ${g}IPv4:${w}        $_ip4${reset}"
+echo -e "  ${g}IPv6:${w}        $_ip6${reset}"
+echo -e "  ${g}İşletim Sistemi:${w} $_os${reset}"
+echo -e "  ${g}Çekirdek:${w}    $_kern${reset}"
+echo -e "  ${g}Çalışma Süresi:${w} $_up${reset}"
+echo ""
+section "KAYNAKLAR"
+echo -e "  ${g}RAM:${w}         $_ram (${_ramuse} kullanılıyor)${reset}"
+echo -e "  ${g}CPU:${w}         $_cpu çekirdek (${_cpuuse} kullanılıyor)${reset}"
+echo -e "  ${g}Disk (/):${w}    $_disk_used / $_disk_total (${_disk_pct})${reset}"
+echo -e "  ${g}Ağ:${w}          $_net_stats${reset}"
+echo -e "  ${g}Dinlenen Portlar:${w} $_ports${reset}"
+echo ""
+section "AÇIK PORTLAR"
+echo -e "$_openports_fmt"
+section "BAĞLANTILAR"
+echo -e "  ${g}SSH/Dropbear:${w} $_ssh / $_drop${reset}"
+echo -e "  ${g}OpenVPN:${w}      $_open${reset}"
+echo -e "  ${g}Toplam:${w}       $_cons${reset}"
+echo ""
+section "SSH PLUS YÖNETİCİSİ"
+echo -e "  ${g}Kullanıcı Veritabanı:${w} ${_user_db}${reset}"
+echo -e "  ${g}Kullanıcılar:${w} ${_user_count} toplam, ${_exp_users} süresi dolmuş${reset}"
+echo -e "  ${g}Oturum Kaydı:${w} ${_sess_log}${reset}"
+echo -e "  ${g}Oturumlar:${w}    ${_sess_count} kayıt, toplam ⇅ $(fmt_bytes_compact "${_sess_bytes}")${reset}"
+echo -e "  ${g}Son Oturum:${w}  ${_sess_last}${reset}"
+echo -e "  ${g}Gizlilik:${w}     IP/banner kaydı ${_privacy}${reset}"
+echo ""
+echo -e "${g}Menüye dönmek için Enter tuşuna basın...${reset}"
+read -r

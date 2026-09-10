@@ -1,0 +1,714 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+check_dependencies() {
+    local missing_deps=()
+    local install_needed=false
+    local needs_root=false
+
+    local pkg_manager=""
+    if command -v apt-get > /dev/null 2>&1; then
+        pkg_manager="apt-get"
+    elif command -v yum > /dev/null 2>&1; then
+        pkg_manager="yum"
+    elif command -v dnf > /dev/null 2>&1; then
+        pkg_manager="dnf"
+    elif command -v pacman > /dev/null 2>&1; then
+        pkg_manager="pacman"
+    fi
+
+    msg_info "Bağımlılıklar kontrol ediliyor..."
+
+    if ! command -v sshd > /dev/null 2>&1; then
+        missing_deps+=("openssh-server")
+        install_needed=true
+        needs_root=true
+    fi
+
+    if ! command -v ss > /dev/null 2>&1; then
+        missing_deps+=("iproute2")
+        install_needed=true
+        needs_root=true
+    fi
+
+    if ! command -v systemctl > /dev/null 2>&1; then
+        msg_warn "systemd bulunamadı. Bazı özellikler çalışmayabilir."
+    fi
+
+    if ! command -v ufw > /dev/null 2>&1; then
+        missing_deps+=("ufw")
+        install_needed=true
+        needs_root=true
+    fi
+
+    for tool in grep sed awk cut; do
+        if ! command -v "$tool" > /dev/null 2>&1; then
+            missing_deps+=("$tool")
+            install_needed=true
+            needs_root=true
+        fi
+    done
+
+    if [[ $needs_root == true ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            msg_err "Eksik bağımlılıklar tespit edildi. Bunları kurmak için bu script root olarak çalıştırılmalıdır."
+            msg_err "Eksik: ${missing_deps[*]}"
+            msg_err "Lütfen şunu çalıştırın: sudo $0"
+            return 1
+        fi
+
+        if [[ -z "$pkg_manager" ]]; then
+            msg_err "Desteklenen bir paket yöneticisi bulunamadı. Lütfen bağımlılıkları manuel olarak kurun:"
+            msg_err "Eksik: ${missing_deps[*]}"
+            return 1
+        fi
+    fi
+
+    if [[ $install_needed == true ]]; then
+        msg_info "Eksik bağımlılıklar kuruluyor: ${missing_deps[*]}"
+
+        case "$pkg_manager" in
+            apt-get)
+                apt-get update -qq > /dev/null 2>&1
+                for dep in "${missing_deps[@]}"; do
+                    if [[ "$dep" == "openssh-server" ]]; then
+                        apt-get install -y openssh-server > /dev/null 2>&1
+                    elif [[ "$dep" == "iproute2" ]]; then
+                        apt-get install -y iproute2 > /dev/null 2>&1
+                    elif [[ "$dep" == "ufw" ]]; then
+                        apt-get install -y ufw > /dev/null 2>&1
+                    elif [[ "$dep" == "grep" ]]; then
+                        apt-get install -y grep > /dev/null 2>&1
+                    elif [[ "$dep" == "sed" ]]; then
+                        apt-get install -y sed > /dev/null 2>&1
+                    elif [[ "$dep" == "awk" ]]; then
+                        apt-get install -y gawk > /dev/null 2>&1
+                    elif [[ "$dep" == "cut" ]]; then
+                        apt-get install -y coreutils > /dev/null 2>&1
+                    fi
+                done
+                ;;
+            yum)
+                for dep in "${missing_deps[@]}"; do
+                    if [[ "$dep" == "openssh-server" ]]; then
+                        yum install -y openssh-server > /dev/null 2>&1
+                    elif [[ "$dep" == "iproute2" ]]; then
+                        yum install -y iproute > /dev/null 2>&1
+                    elif [[ "$dep" == "ufw" ]]; then
+                        yum install -y ufw > /dev/null 2>&1
+                    elif [[ "$dep" == "grep" ]]; then
+                        yum install -y grep > /dev/null 2>&1
+                    elif [[ "$dep" == "sed" ]]; then
+                        yum install -y sed > /dev/null 2>&1
+                    elif [[ "$dep" == "awk" ]]; then
+                        yum install -y gawk > /dev/null 2>&1
+                    elif [[ "$dep" == "cut" ]]; then
+                        yum install -y coreutils > /dev/null 2>&1
+                    fi
+                done
+                ;;
+            dnf)
+                for dep in "${missing_deps[@]}"; do
+                    if [[ "$dep" == "openssh-server" ]]; then
+                        dnf install -y openssh-server > /dev/null 2>&1
+                    elif [[ "$dep" == "iproute2" ]]; then
+                        dnf install -y iproute > /dev/null 2>&1
+                    elif [[ "$dep" == "ufw" ]]; then
+                        dnf install -y ufw > /dev/null 2>&1
+                    elif [[ "$dep" == "grep" ]]; then
+                        dnf install -y grep > /dev/null 2>&1
+                    elif [[ "$dep" == "sed" ]]; then
+                        dnf install -y sed > /dev/null 2>&1
+                    elif [[ "$dep" == "awk" ]]; then
+                        dnf install -y gawk > /dev/null 2>&1
+                    elif [[ "$dep" == "cut" ]]; then
+                        dnf install -y coreutils > /dev/null 2>&1
+                    fi
+                done
+                ;;
+            pacman)
+                for dep in "${missing_deps[@]}"; do
+                    if [[ "$dep" == "openssh-server" ]]; then
+                        pacman -S --noconfirm openssh > /dev/null 2>&1
+                    elif [[ "$dep" == "iproute2" ]]; then
+                        pacman -S --noconfirm iproute2 > /dev/null 2>&1
+                    elif [[ "$dep" == "ufw" ]]; then
+                        pacman -S --noconfirm ufw > /dev/null 2>&1
+                    elif [[ "$dep" == "grep" ]]; then
+                        pacman -S --noconfirm grep > /dev/null 2>&1
+                    elif [[ "$dep" == "sed" ]]; then
+                        pacman -S --noconfirm sed > /dev/null 2>&1
+                    elif [[ "$dep" == "awk" ]]; then
+                        pacman -S --noconfirm gawk > /dev/null 2>&1
+                    elif [[ "$dep" == "cut" ]]; then
+                        pacman -S --noconfirm coreutils > /dev/null 2>&1
+                    fi
+                done
+                ;;
+        esac
+
+        local failed=()
+        for dep in "${missing_deps[@]}"; do
+            local cmd=""
+            case "$dep" in
+                openssh-server) cmd="sshd" ;;
+                iproute2) cmd="ss" ;;
+                ufw) cmd="ufw" ;;
+                grep) cmd="grep" ;;
+                sed) cmd="sed" ;;
+                awk) cmd="awk" ;;
+                cut) cmd="cut" ;;
+            esac
+
+            if [[ -n "$cmd" ]] && ! command -v "$cmd" > /dev/null 2>&1; then
+                failed+=("$dep")
+            fi
+        done
+
+        if [[ ${#failed[@]} -gt 0 ]]; then
+            msg_err "Kurulamadı: ${failed[*]}"
+            msg_err "Lütfen bunları manuel olarak kurup tekrar deneyin."
+            return 1
+        else
+            msg_ok "Tüm bağımlılıklar başarıyla kuruldu!"
+        fi
+    else
+        msg_ok "Tüm bağımlılıklar zaten kurulu."
+    fi
+
+    if [[ ! -f "/etc/ssh/sshd_config" ]]; then
+        msg_err "SSH yapılandırma dosyası bulunamadı: /etc/ssh/sshd_config"
+        msg_err "Lütfen OpenSSH sunucusunun düzgün kurulduğundan emin olun."
+        return 1
+    fi
+
+    return 0
+}
+
+verif_ptrs() {
+    local port=$1
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        echo ""
+        msg_err "Geçersiz port numarası! Port 1 ile 65535 arasında olmalıdır."
+        return 1
+    fi
+    return 0
+}
+
+check_systemd() {
+    if ! command -v systemctl > /dev/null 2>&1; then
+        msg_err "Bu sistemde systemd mevcut değil!"
+        return 1
+    fi
+    return 0
+}
+
+ensure_ssh_directories() {
+    if grep -qE "^[[:space:]]*UsePrivilegeSeparation[[:space:]]+no" /etc/ssh/sshd_config 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ ! -d "/run/sshd" ]]; then
+        if mkdir -p /run/sshd 2>/dev/null; then
+            chmod 0755 /run/sshd 2>/dev/null
+            chown root:root /run/sshd 2>/dev/null || true
+        else
+            if [[ ! -d "/var/run/sshd" ]]; then
+                if mkdir -p /var/run/sshd 2>/dev/null; then
+                    chmod 0755 /var/run/sshd 2>/dev/null
+                    chown root:root /var/run/sshd 2>/dev/null || true
+                fi
+            fi
+
+            if [[ ! -d "/run/sshd" ]] && [[ ! -d "/var/run/sshd" ]]; then
+                if ! grep -qE "^[[:space:]]*PrivilegeSeparationDirectory" /etc/ssh/sshd_config 2>/dev/null; then
+                    if [[ -d "/var/run" ]]; then
+                        if mkdir -p /var/run/sshd 2>/dev/null; then
+                            chmod 0755 /var/run/sshd 2>/dev/null
+                            if ! grep -q "PrivilegeSeparationDirectory" /etc/ssh/sshd_config 2>/dev/null; then
+                                echo "PrivilegeSeparationDirectory /var/run/sshd" >> /etc/ssh/sshd_config 2>/dev/null || true
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    if [[ ! -d "/run/sshd" ]] && [[ ! -d "/var/run/sshd" ]]; then
+        local priv_sep_dir=$(grep -E "^[[:space:]]*PrivilegeSeparationDirectory" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+        if [[ -n "$priv_sep_dir" ]] && [[ -d "$priv_sep_dir" ]]; then
+            return 0
+        fi
+
+        if ! grep -qE "^[[:space:]]*UsePrivilegeSeparation" /etc/ssh/sshd_config 2>/dev/null; then
+            echo "UsePrivilegeSeparation no" >> /etc/ssh/sshd_config 2>/dev/null || true
+            return 0
+        fi
+
+        return 1
+    fi
+
+    return 0
+}
+
+get_current_ports() {
+    grep -E '^[[:space:]]*Port[[:space:]]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | sort -n | uniq
+}
+
+port_exists() {
+    local port=$1
+    grep -qE "^[[:space:]]*Port[[:space:]]+${port}[[:space:]]*$" /etc/ssh/sshd_config 2>/dev/null
+}
+
+show_current_ports() {
+    local ports=$(get_current_ports)
+    if [[ -z "$ports" ]]; then
+        color_echo "Yapılandırılmış port yok (varsayılan port 22 kullanılıyor)" "yellow"
+    else
+        color_echo "Mevcut SSH portları:" "green"
+        echo "$ports" | while read port; do
+            color_echo "  - Port $port" "white"
+        done
+    fi
+}
+
+add_port_sshd() {
+    local port=$1
+    local quiet="${2:-false}"
+
+    if port_exists "$port"; then
+        if [[ "$quiet" != "true" ]]; then
+            msg_warn "Port $port zaten sshd_config içinde"
+        fi
+        return 0
+    fi
+
+    if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+        local first_match_line=$(grep -n "^Match" /etc/ssh/sshd_config 2>/dev/null | head -1 | cut -d: -f1)
+        if [[ -n "$first_match_line" ]]; then
+            sed -i "${first_match_line}i\Port $port" /etc/ssh/sshd_config
+        else
+            echo "Port $port" >> /etc/ssh/sshd_config
+        fi
+    else
+        echo "Port $port" >> /etc/ssh/sshd_config
+    fi
+
+    if ! ensure_ssh_directories; then
+        if [[ "$quiet" != "true" ]]; then
+            msg_err "Gerekli SSH dizinleri oluşturulamadı. Root olarak çalıştırın veya /run/sshd dizinini manuel olarak oluşturun."
+        fi
+    fi
+
+    local validation_output=$(sshd -t 2>&1)
+    if [[ $? -ne 0 ]]; then
+        sed -i "/^[[:space:]]*Port[[:space:]]\+${port}[[:space:]]*$/d" /etc/ssh/sshd_config
+        if [[ "$quiet" != "true" ]]; then
+            msg_err "Geçersiz SSH yapılandırması! Port $port eklenmedi."
+            echo "$validation_output" | head -3 | while read line; do
+                color_echo "  $line" "red"
+            done
+        fi
+        return 1
+    fi
+
+    return 0
+}
+
+remove_port_sshd() {
+    local port=$1
+
+    if [[ "$port" == "22" ]]; then
+        msg_warn "Varsayılan port 22 kaldırılamaz!"
+        return 1
+    fi
+
+    if ! grep -q "^Port $port" /etc/ssh/sshd_config 2>/dev/null; then
+        msg_err "Port $port sshd_config içinde yapılandırılmamış"
+        return 1
+    fi
+
+    sed -i "/^Port $port$/d" /etc/ssh/sshd_config
+
+    if ! sshd -t > /dev/null 2>&1; then
+        msg_err "Geçersiz SSH yapılandırması! Değişiklikler geri alınıyor..."
+        add_port_sshd "$port"
+        return 1
+    fi
+
+    return 0
+}
+
+configure_systemd_socket() {
+    local ports=$(get_current_ports)
+
+    mkdir -p /etc/systemd/system/ssh.socket.d
+
+    cat > /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+[Socket]
+ListenStream=
+EOF
+
+    while read port; do
+        echo "ListenStream=0.0.0.0:$port" >> /etc/systemd/system/ssh.socket.d/override.conf
+        echo "ListenStream=[::]:$port" >> /etc/systemd/system/ssh.socket.d/override.conf
+    done <<< "$ports"
+
+    systemctl daemon-reload
+
+    systemctl restart ssh.socket
+
+    systemctl restart ssh.service
+}
+
+configure_ufw() {
+    local ports=$(get_current_ports)
+
+    if ! command -v ufw > /dev/null 2>&1; then
+        msg_err "UFW gereklidir ancak kurulu değil!"
+        msg_err "Lütfen UFW'yı manuel olarak kurun: apt-get install ufw (veya yum/dnf/pacman karşılığı)"
+        return 1
+    fi
+
+    if ! ufw status | grep -q "Status: active"; then
+        msg_info "UFW etkinleştiriliyor..."
+        if ! ufw --force enable > /dev/null 2>&1; then
+            msg_err "UFW etkinleştirilemedi!"
+            return 1
+        fi
+    fi
+
+    local failed_ports=()
+    while read port; do
+        if ! ufw allow "$port/tcp" > /dev/null 2>&1; then
+            failed_ports+=("$port")
+        fi
+    done <<< "$ports"
+
+    if [[ ${#failed_ports[@]} -gt 0 ]]; then
+        msg_warn "Şu portlar için güvenlik duvarı kuralları yapılandırılamadı: ${failed_ports[*]}"
+        return 1
+    fi
+
+    msg_ok "UFW güvenlik duvarı kuralları güncellendi"
+    return 0
+}
+
+verify_setup() {
+    echo ""
+    color_echo "SSH çoklu port yapılandırması doğrulanıyor..." "green"
+    echo ""
+
+    local listening=$(ss -ltnp 2>/dev/null | grep ssh | awk '{print $4}' | cut -d: -f2 | sort -n | uniq)
+    if [[ -n "$listening" ]]; then
+        color_echo "SSH şu portları dinliyor:" "green"
+        echo "$listening" | while read port; do
+            color_echo "  ✓ Port $port" "white"
+        done
+    else
+        msg_warn "Dinleyen SSH portu bulunamadı!"
+    fi
+
+    if systemctl is-active --quiet ssh.socket; then
+        msg_ok "systemd ssh.socket etkin"
+    else
+        msg_err "systemd ssh.socket etkin değil!"
+    fi
+
+    local accepted=$(sshd -T 2>/dev/null | grep '^port' | awk '{print $2}' | sort -n | uniq)
+    if [[ -n "$accepted" ]]; then
+        color_echo "sshd şu portlardan bağlantı kabul ediyor:" "green"
+        echo "$accepted" | while read port; do
+            color_echo "  ✓ Port $port" "white"
+        done
+    fi
+}
+
+main_menu() {
+    while true; do
+        clear
+        banner_info "         SSH ÇOKLU PORT AYARI          "
+        echo ""
+        show_current_ports
+        echo ""
+        menu_option "1" "PORT EKLE" "red" "yellow"
+        menu_option "2" "PORT KALDIR" "red" "yellow"
+        menu_option "3" "BİRDEN FAZLA PORT AYARLA (HIZLI)" "red" "yellow"
+        menu_option "4" "KURULUMU DOĞRULA" "red" "yellow"
+        menu_option "5" "GERİ" "red" "yellow"
+        echo ""
+        color_echo_n "SEÇENEK BELİRLEYİN: " "green"
+        read -r option
+
+        case "$option" in
+            1)
+                clear
+                banner_info "         SSH'YE PORT EKLE          "
+                echo ""
+                color_echo_n "Port numarasını girin: " "green"
+                read -r port
+
+                if [[ -z "$port" ]]; then
+                    msg_err "Port boş olamaz!"
+                    sleep 2
+                    continue
+                fi
+
+                if ! verif_ptrs "$port"; then
+                    sleep 2
+                    continue
+                fi
+
+                ensure_ssh_directories
+
+                if add_port_sshd "$port"; then
+                    if check_systemd; then
+                        configure_systemd_socket
+                    else
+                        if command -v systemctl > /dev/null 2>&1; then
+                            systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null
+                        else
+                            service ssh restart 2>/dev/null || service sshd restart 2>/dev/null
+                        fi
+                    fi
+                    if configure_ufw; then
+                        msg_ok "Port $port başarıyla eklendi!"
+                    else
+                        msg_err "Port $port eklendi ancak güvenlik duvarı yapılandırması başarısız oldu!"
+                        msg_err "Portlar güvenlik duvarı tarafından engellenmiş olabilir. Lütfen UFW'yı manuel olarak yapılandırın."
+                    fi
+                else
+                    msg_err "Port $port eklenemedi!"
+                fi
+
+                sleep 3
+                ;;
+            2)
+                clear
+                banner_danger "       SSH'DEN PORT KALDIR        "
+                echo ""
+                show_current_ports
+                echo ""
+                msg_warn "Varsayılan port 22 kaldırılamaz!"
+                echo ""
+                color_echo_n "Kaldırılacak port numarasını girin: " "green"
+                read -r port
+
+                if [[ -z "$port" ]]; then
+                    msg_err "Port boş olamaz!"
+                    sleep 2
+                    continue
+                fi
+
+                if [[ "$port" == "22" ]]; then
+                    msg_err "Varsayılan port 22 kaldırılamaz!"
+                    sleep 2
+                    continue
+                fi
+
+                echo ""
+                color_echo "Port $port SSH yapılandırmasından kaldırılıyor..." "green"
+                echo ""
+
+                if remove_port_sshd "$port"; then
+                    if check_systemd; then
+                        configure_systemd_socket
+                    else
+                        if command -v systemctl > /dev/null 2>&1; then
+                            systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null
+                        else
+                            service ssh restart 2>/dev/null || service sshd restart 2>/dev/null
+                        fi
+                    fi
+
+                    msg_ok "Port $port başarıyla kaldırıldı!"
+                else
+                    msg_err "Port $port kaldırılamadı!"
+                fi
+
+                sleep 3
+                ;;
+            3)
+                clear
+                banner_info "      HIZLI ÇOKLU PORT AYARI       "
+                echo ""
+                color_echo "Portları virgülle ayırarak girin:" "yellow"
+                color_echo "Örnek: 22, 3398, 443, 80, 8080" "white"
+                echo ""
+                color_echo_n "Portlar: " "green"
+                read -r ports_input
+
+                if [[ -z "$ports_input" ]]; then
+                    msg_err "Hiç port girilmedi!"
+                    sleep 2
+                    continue
+                fi
+
+                if ! ensure_ssh_directories; then
+                    msg_err "Uyarı: /run/sshd dizini oluşturulamadı."
+                    msg_err "Lütfen manuel olarak oluşturun: mkdir -p /run/sshd && chmod 0755 /run/sshd"
+                    msg_err "Veya bu scripti root olarak çalıştırın."
+                    sleep 3
+                    continue
+                fi
+
+                local backup_file="/etc/ssh/sshd_config.backup.$(date +%Y%m%d_%H%M%S)"
+                if cp /etc/ssh/sshd_config "$backup_file" 2>/dev/null; then
+                    msg_info "Yedek oluşturuldu: $backup_file"
+                fi
+
+                local validation_error=$(sshd -t 2>&1)
+                if [[ $? -ne 0 ]]; then
+                    msg_err "Mevcut SSH yapılandırmasında hatalar var:"
+                    echo "$validation_error" | while read line; do
+                        color_echo "  $line" "red"
+                    done
+                    msg_err "Lütfen önce mevcut yapılandırma hatalarını düzeltin!"
+                    sleep 3
+                    continue
+                fi
+
+                local ports_list=""
+                IFS=',' read -ra port_array <<< "$ports_input"
+                for port in "${port_array[@]}"; do
+                    port=$(echo "$port" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    if [[ -n "$port" ]]; then
+                        if verif_ptrs "$port" 2>/dev/null; then
+                            ports_list="$ports_list $port"
+                        else
+                            msg_warn "Geçersiz port atlanıyor: $port"
+                        fi
+                    fi
+                done
+
+                if [[ -z "$ports_list" ]]; then
+                    msg_err "Yapılandırılacak geçerli port yok!"
+                    sleep 2
+                    continue
+                fi
+
+                echo ""
+                color_echo "Birden fazla port yapılandırılıyor..." "green"
+                echo ""
+
+                local current_ports=$(get_current_ports)
+
+                local added_count=0
+                local skipped_count=0
+                local failed_count=0
+
+                for port in $ports_list; do
+                    if port_exists "$port"; then
+                        ((skipped_count++))
+                        continue
+                    fi
+
+                    if add_port_sshd "$port" "true"; then
+                        ((added_count++))
+                        current_ports=$(get_current_ports)
+                    else
+                        ((failed_count++))
+                    fi
+                done
+
+                if [[ $added_count -gt 0 ]]; then
+                    validation_error=$(sshd -t 2>&1)
+                    if [[ $? -ne 0 ]]; then
+                        msg_err "Portlar eklendikten sonra yapılandırma doğrulaması başarısız oldu!"
+                        echo "$validation_error" | while read line; do
+                            color_echo "  $line" "red"
+                        done
+
+                        if [[ -f "$backup_file" ]]; then
+                            msg_warn "Orijinal yapılandırma yedekten geri yükleniyor..."
+                            if cp "$backup_file" /etc/ssh/sshd_config 2>/dev/null; then
+                                msg_info "Yapılandırma başarıyla geri yüklendi"
+                            else
+                                msg_err "Yedek geri yüklenemedi! Manuel müdahale gerekiyor."
+                            fi
+                        else
+                            msg_err "Yedek bulunamadı! Lütfen /etc/ssh/sshd_config dosyasını manuel olarak kontrol edin"
+                        fi
+                        sleep 3
+                        continue
+                    fi
+                elif [[ $skipped_count -gt 0 ]] && [[ $added_count -eq 0 ]]; then
+                    validation_error=$(sshd -t 2>&1)
+                    if [[ $? -ne 0 ]]; then
+                        msg_err "Mevcut SSH yapılandırmasında hatalar var:"
+                        echo "$validation_error" | while read line; do
+                            color_echo "  $line" "red"
+                        done
+                        msg_err "Lütfen yapılandırma hatalarını manuel olarak düzeltin!"
+                        sleep 3
+                        continue
+                    fi
+                fi
+
+                if [[ $added_count -gt 0 ]]; then
+                    if check_systemd; then
+                        configure_systemd_socket
+                    else
+                        if command -v systemctl > /dev/null 2>&1; then
+                            systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null
+                        else
+                            service ssh restart 2>/dev/null || service sshd restart 2>/dev/null
+                        fi
+                    fi
+
+                    if configure_ufw; then
+                        msg_ok "Çoklu port ayarı tamamlandı!"
+                    else
+                        msg_err "Çoklu port ayarı tamamlandı ancak güvenlik duvarı yapılandırması başarısız oldu!"
+                        msg_err "Portlar engellenmiş olabilir. Lütfen UFW'yı manuel olarak yapılandırın."
+                    fi
+                    if [[ $added_count -gt 0 ]]; then
+                        msg_info "$added_count yeni port eklendi."
+                    fi
+                    if [[ $skipped_count -gt 0 ]]; then
+                        msg_info "Zaten yapılandırılmış $skipped_count port atlandı."
+                    fi
+                    if [[ $failed_count -gt 0 ]]; then
+                        msg_warn "$failed_count port eklenemedi."
+                    fi
+                    verify_setup
+                elif [[ $skipped_count -gt 0 ]]; then
+                    msg_info "Tüm portlar zaten yapılandırılmış."
+                    verify_setup
+                else
+                    msg_warn "Hiçbir port yapılandırılmadı."
+                fi
+
+                sleep 5
+                ;;
+            4)
+                verify_setup
+                echo ""
+                color_echo_n "Devam etmek için ENTER'a basın..." "yellow"
+                read
+                ;;
+            5)
+                return 0
+                ;;
+            *)
+                msg_err "Geçersiz seçenek!"
+                sleep 2
+                ;;
+        esac
+    done
+}
+
+if ! check_dependencies; then
+    msg_err "Bağımlılık kontrolü başarısız oldu. Çıkılıyor..."
+    exit 1
+fi
+
+main_menu

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+banner_info "            SİSTEMİ YENİDEN BAŞLAT              "
+echo ""
+msg_warn "Bu işlem sistemi yeniden başlatacak!"
+color_echo_n "Emin misiniz? [e/H]: " "yellow"
+read -r confirm
+if [[ "$confirm" =~ ^[EeYy]$ ]]; then
+	color_echo "3 saniye içinde yeniden başlatılıyor..." "red"
+	sleep 3
+	reboot
+else
+	color_echo "Yeniden başlatma iptal edildi." "green"
+	sleep 2
+fi

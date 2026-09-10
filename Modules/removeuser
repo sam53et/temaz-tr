@@ -1,0 +1,161 @@
+#!/bin/bash
+
+if [[ -f /etc/SSHPlus/colors ]]; then
+	source /etc/SSHPlus/colors
+elif [[ -f /bin/colors ]]; then
+	source /bin/colors
+elif [[ -f "$(dirname "$0")/colors" ]]; then
+	source "$(dirname "$0")/colors"
+fi
+
+if [[ -f /etc/SSHPlus/db ]]; then
+	source /etc/SSHPlus/db
+elif [[ -f /bin/db ]]; then
+	source /bin/db
+elif [[ -f "$(dirname "$0")/db" ]]; then
+	source "$(dirname "$0")/db"
+fi
+if [[ -z "${SSHPLUS_FROM_REPO:-}" ]]; then
+	_mod_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+	_repo_root="$(cd "${_mod_dir}/.." 2>/dev/null && pwd)"
+	[[ -f "${_repo_root}/install.sh" ]] && [[ -f "${_repo_root}/version" ]] && export SSHPLUS_FROM_REPO=1
+	unset -v _mod_dir _repo_root
+fi
+
+remove_ovp() {
+	local user="$1"
+	[[ -e /etc/debian_version ]] && GROUPNAME="nogroup" || GROUPNAME="nobody"
+	cd /etc/openvpn/easy-rsa/ || return
+	./easyrsa --batch revoke "$user" >/dev/null 2>&1
+	./easyrsa gen-crl >/dev/null 2>&1
+	rm -rf "pki/reqs/${user}.req" "pki/private/${user}.key" "pki/issued/${user}.crt" 2>/dev/null
+	rm -f /etc/openvpn/crl.pem 2>/dev/null
+	cp /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn/crl.pem 2>/dev/null
+	chown nobody:"${GROUPNAME}" /etc/openvpn/crl.pem 2>/dev/null
+	[[ -e "$HOME/${user}.ovpn" ]] && rm -f "$HOME/${user}.ovpn" 2>/dev/null
+	[[ -e /var/www/html/openvpn/"${user}.zip" ]] && rm -f /var/www/html/openvpn/"${user}.zip" 2>/dev/null
+}
+[[ -z "${SSHPLUS_FROM_REPO:-}" ]] && [[ ! -e /usr/lib/sshplus ]] && rm -rf /bin/ > /dev/null 2>&1
+clear
+banner_info "   SSH Kullanıcısını Kaldır   "
+echo ""
+menu_option "1" "BİR KULLANICIYI KALDIR" "red" "yellow"
+menu_option "2" "TÜM KULLANICILARI KALDIR" "red" "yellow"
+menu_option "0" "GERİ" "red" "yellow"
+menu_option "00" "ÇIKIŞ" "red" "yellow"
+echo ""
+color_echo_n "Seçim [1/2/0/00]: " "green"
+read -r resp
+resp="${resp//[[:space:]]/}"
+[[ "$resp" == "0" ]] && exit 0
+[[ "$resp" == "00" ]] && exit 99
+if [[ "$resp" == "1" ]]; then
+	clear
+	banner_info "   SSH Kullanıcısını Kaldır   "
+	echo ""
+	color_echo "KULLANICI LİSTESİ:" "yellow"
+	echo ""
+	_user_list=$(awk -F: '$3>=1000 {print $1}' /etc/passwd 2>/dev/null | grep -v nobody)
+	idx=0
+	unset _userPass
+	red_code=$(get_color_code "red")
+	cyan_code=$(get_color_code "cyan")
+	white_code=$(get_color_code "white")
+	green_code=$(get_color_code "green")
+	reset_code=$(get_reset_code)
+	while read -r _user; do
+		[[ -z "$_user" ]] && continue
+		((idx++)) || true
+		[[ $idx -le 9 ]] && i=0$idx || i=$idx
+		echo -e "${red_code}[${cyan_code}$i${red_code}] ${white_code}- ${green_code}$_user${reset_code}"
+		_userPass+="\n${i}:${_user}"
+	done <<< "${_user_list}"
+echo ""
+num_user=$(awk -F: '$3>=1000 {print $1}' /etc/passwd | grep -v nobody | wc -l)
+echo ""
+menu_option "0" "GERİ" "red" "yellow"
+menu_option "00" "ÇIKIŞ" "red" "yellow"
+echo ""
+color_echo_n "Bir kullanıcı yazın veya seçin " "green"
+color_echo_n "[" "yellow"
+color_echo_n "1" "cyan"
+color_echo_n "-" "red"
+color_echo_n "$num_user" "cyan"
+color_echo_n "]" "yellow"
+color_echo_n ": " "white"
+read -r option
+option="${option//[[:space:]]/}"
+if [[ "$option" == "0" ]]; then
+	exit 0
+elif [[ "$option" == "00" ]]; then
+	exit 99
+fi
+user=$(echo -e "${_userPass}" | awk -v o="$option" -F: 'NF>=2 && $1+0==o+0 {print $2; exit}')
+if [[ -z "$option" ]]; then
+	echo ""
+	msg_err "  Boş veya geçersiz kullanıcı!   "
+	echo ""
+	exit 1
+elif [[ -z "$user" ]]; then
+	echo ""
+	msg_err " Boş veya geçersiz kullanıcı! "
+	echo ""
+	exit 1
+else
+	if grep -wq "$user" /etc/passwd 2>/dev/null; then
+		echo ""
+		pkill -f "$user" > /dev/null 2>&1
+		sleep 1
+		userdel -f "$user" 2>/dev/null || deluser --force "$user" 2>/dev/null
+		if getent passwd "$user" >/dev/null 2>&1; then
+			msg_err " $user kullanıcısı kaldırılamadı. Root olarak çalıştırın. "
+			exit 1
+		fi
+		msg_ok " $user kullanıcısı başarıyla kaldırıldı! "
+		sshplus_with_db_lock sshplus_db_remove_user "$user" >/dev/null 2>&1 || true
+		if [[ -e /etc/openvpn/server.conf ]]; then
+			remove_ovp "$user"
+		fi
+		exit 0
+	else
+		echo ""
+		msg_err "$user kullanıcısı mevcut değil!"
+		echo ""
+	fi
+fi
+elif [[ "$resp" == "2" ]]; then
+	clear
+	banner_info "   SSH Kullanıcısını Kaldır   "
+	echo ""
+	color_echo_n "TÜM KULLANICILARI GERÇEKTEN KALDIRMAK İSTİYOR MUSUNUZ? " "yellow"
+	color_echo_n "[e/h]: " "white"
+	read -r opc
+	if [[ "$opc" = "e" ]] || [[ "$opc" = "E" ]] || [[ "$opc" = "y" ]] || [[ "$opc" = "Y" ]]; then
+		echo ""
+		color_echo "Kullanıcılar kaldırılıyor..." "yellow"
+		for user in $(awk -F: '$3>=1000 {print $1}' /etc/passwd 2>/dev/null | grep -vi "nobody"); do
+			pkill -f "$user" >/dev/null 2>&1
+			sleep 0.5
+			userdel -f "$user" 2>/dev/null || deluser --force "$user" 2>/dev/null
+			if [[ -e /etc/openvpn/server.conf ]]; then
+				remove_ovp "$user"
+			fi
+		done
+		sshplus_with_db_lock sshplus_db_clear >/dev/null 2>&1 || true
+		rm -f "$HOME"/*.zip >/dev/null 2>&1
+		echo ""
+		msg_ok "KULLANICILAR BAŞARIYLA KALDIRILDI!"
+		sleep 2
+		exit 0
+	else
+		echo ""
+		msg_err "Menüye dönülüyor..."
+		sleep 2
+		exit 0
+	fi
+else
+	echo ""
+	msg_err "Geçersiz seçenek!"
+	sleep 1.5
+	exit 0
+fi
