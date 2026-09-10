@@ -26,7 +26,7 @@ echo "PasswordAuthentication yes" >>/etc/ssh/sshd_config
 _dir1='/bin'
 _dir2='/etc/SSHPlus'
 rm $_dir2/cabecalho $_dir2/open.py $_dir2/proxy.py $_dir2/colors $_dir2/db >/dev/null 2>&1
-_mdls=("changepassword" "createuser" "expiredusers" "changeexpiration" "expirationmanager" "removeuser" "changelimit" "sshmonitor" "userbackup" "menu" "speedtest" "bannersetup" "serversettings" "SERVER_NAME" "restartservices" "rebootsystem" "updatescript" "connections" "removescript" "vpsinfo" "userinfo" "open.py" "proxy.py" "colors" "db" "multiport" "vpstraffic" "autorun")
+_mdls=("changepassword" "createuser" "expiredusers" "changeexpiration" "expirationmanager" "removeuser" "changelimit" "sshmonitor" "userbackup" "menu" "speedtest" "bannersetup" "serversettings" "SERVER_NAME" "restartservices" "rebootsystem" "connections" "removescript" "vpsinfo" "userinfo" "open.py" "proxy.py" "colors" "db" "multiport" "vpstraffic" "autorun")
 for _arq in ${_mdls[@]}; do
 	[[ -e $_dir1/$_arq ]] && rm $_dir1/$_arq >/dev/null 2>&1
 	_download_url="$_REPO_URL/Modules/$_arq"
