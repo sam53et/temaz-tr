@@ -506,7 +506,6 @@ main() {
 
 	printf "\nSonraki adımlar\n"
 	printf "• Çalıştır: menu\n"
-	printf "• Güncelle: menu → [19] Scripti güncelle\n"
 	printf "• Kaldır: removescript (menu → SİSTEM → Scripti kaldır)\n"
 	printf "• Sunucu ayarları: menu → [13] Sunucu ayarları (veya aşağıdan şimdi uygulayın)\n\n"
 
