@@ -371,7 +371,8 @@ print_user_monitor_screen() {
 
 	local n_expired=0
 	for u in "${_U_LIST[@]:-}"; do
-		local rem="${_U_remaining_days[$u]:-?}"
+		[[ -n "$u" ]] || continue
+        local rem="${_U_remaining_days[$u]:-?}"
 		[[ "$rem" =~ ^-?[0-9]+$ ]] && [[ $rem -le 0 ]] && ((n_expired++)) || true
 	done
 	[[ $n_expired -gt 0 ]] && printf "%b⚠ %d kullanıcının süresi dolmuş (İncelemek için Filtre: süresi doldu)%b\n" "$(c ui_warn)" "$n_expired" "$(reset)"
