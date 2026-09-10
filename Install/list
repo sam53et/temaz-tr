@@ -43,22 +43,22 @@ for _arq in ${_mdls[@]}; do
 	fi
 done
 mv $_dir1/open.py $_dir1/proxy.py $_dir1/colors $_dir1/db $_dir2 >/dev/null 2>&1
-[[ ! -e /etc/autostart ]] && {
-	echo '#!/bin/bash
-clear
+if [[ ! -e /etc/autostart ]]; then
+	printf '#!/bin/bash\nclear\n' >/etc/autostart
 	chmod +x /etc/autostart
-} || {
-	[[ $(ps x | grep "bot_plus" | grep -v grep | wc -l) != '0' ]] && wget -qO- https://raw.githubusercontent.com/shellscriptx/shellbot/master/ShellBot.sh >/etc/SSHPlus/ShellBot.sh
-	for proc in $(ps x | grep 'dmS' | grep -v 'grep' | awk {'print $1'}); do
+else
+	if [[ $(ps x | grep "bot_plus" | grep -v grep | wc -l) != '0' ]]; then
+		wget -qO- https://raw.githubusercontent.com/shellscriptx/shellbot/master/ShellBot.sh >/etc/SSHPlus/ShellBot.sh
+	fi
+	for proc in $(ps x | grep 'dmS' | grep -v 'grep' | awk '{print $1}'); do
 		screen -r -S "$proc" -X quit
 	done
-	screen -wipe >/dev/null
-	echo '#!/bin/bash
-clear
+	screen -wipe >/dev/null 2>&1
+	printf '#!/bin/bash\nclear\n' >/etc/autostart
 	chmod +x /etc/autostart
-}
+fi
 (
-	crontab -l 2>/dev/null
+	crontab -l 2>/dev/null | grep -v '/etc/autostart'
 	echo "@reboot /etc/autostart"
 	echo "* * * * * /etc/autostart"
 ) | crontab -
