@@ -1,0 +1,101 @@
+#!/bin/bash
+
+_REPO_URL="https://raw.githubusercontent.com/sam53et/temaz-tr/main"
+
+_lvk=$(wget -qO- --timeout=5 "$_REPO_URL/version" 2>/dev/null)
+[[ -z "$_lvk" ]] && _lvk=$(curl -sfL --max-time 5 "$_REPO_URL/version" 2>/dev/null)
+IP=$(wget -qO- --timeout=5 ipv4.icanhazip.com 2>/dev/null)
+[[ -z "$IP" ]] && IP=$(curl -sfL --max-time 5 ipv4.icanhazip.com 2>/dev/null)
+IP2=$(wget -qO- --timeout=5 http://whatismyip.akamai.com/ 2>/dev/null)
+[[ -z "$IP2" ]] && IP2=$(curl -sfL --max-time 5 http://whatismyip.akamai.com/ 2>/dev/null)
+[[ -n "$IP" ]] || [[ -n "$IP2" ]] && { [[ "$IP" != "$IP2" ]] && ipdovps="${IP2:-$IP}" || ipdovps="${IP:-$IP2}"; echo "$ipdovps" >/etc/IP; }
+lst=$1 && lst1=$2 && lst2=$3 && key1=$4 && key2=crz
+[[ -z "$lst1" ]] && {
+	cat /dev/null > ~/.bash_history 2>/dev/null
+	history -c 2>/dev/null
+	exit 0
+}
+[[ ! -d /etc/SSHPlus ]] && mkdir /etc/SSHPlus
+[[ ! -d /etc/SSHPlus/userteste ]] && mkdir /etc/SSHPlus/userteste
+[[ ! -d /etc/SSHPlus/.tmp ]] && mkdir /etc/SSHPlus/.tmp
+[[ ! -d /etc/bot ]] && mkdir /etc/bot
+[[ ! -d /etc/bot/info-users ]] && mkdir /etc/bot/info-users
+[[ ! -d /etc/bot/arquivos ]] && mkdir /etc/bot/arquivos
+[[ ! -d /etc/bot/revenda ]] && mkdir /etc/bot/revenda
+[[ ! -d /etc/bot/suspensos ]] && mkdir /etc/bot/suspensos
+[[ ! -e /etc/bot/lista_ativos ]] && touch /etc/bot/lista_ativos
+[[ ! -e /etc/bot/lista_suspensos ]] && touch /etc/bot/lista_suspensos
+echo -e 'by: @CRAZY_VPN' >/usr/lib/sshplus && cat /usr/lib/sshplus >$lst2/licence && cat /usr/lib/sshplus > /etc/SSHPlus/.tmp/crazy
+netstat -nplt | grep -w 'apache2' | grep -w '80' && sed -i "s/Listen 80/Listen 81/g" /etc/apache2/ports.conf && service apache2 restart
+[[ "$(grep -o '#Port 22' /etc/ssh/sshd_config)" == "#Port 22" ]] && sed -i "s;#Port 22;Port 22;" /etc/ssh/sshd_config && service ssh restart
+grep -v "^PasswordAuthentication" /etc/ssh/sshd_config >/tmp/passlogin && mv /tmp/passlogin /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >>/etc/ssh/sshd_config
+_dir1='/bin'
+_dir2='/etc/SSHPlus'
+rm $_dir2/cabecalho $_dir2/open.py $_dir2/proxy.py $_dir2/colors $_dir2/db >/dev/null 2>&1
+_mdls=("changepassword" "createuser" "expiredusers" "changeexpiration" "expirationmanager" "removeuser" "verifbot" "droplimiter" "changelimit" "ajuda" "sshmonitor" "userbackup" "instsqd" "menu" "speedtest" "bannersetup" "serversettings" "restartservices" "rebootsystem" "updatescript" "connections" "removescript" "vpsinfo" "userinfo" "verifatt" "uexpired" "cabecalho" "bot" "open.py" "proxy.py" "colors" "db" "multiport" "vpstraffic" "autorun")
+for _arq in ${_mdls[@]}; do
+	[[ -e $_dir1/$_arq ]] && rm $_dir1/$_arq >/dev/null 2>&1
+	_download_url="$_REPO_URL/Modules/$_arq"
+	if ! wget -c -P $_dir1 "$_download_url" >/dev/null 2>&1; then
+		if ! curl -sL "$_download_url" -o "$_dir1/$_arq" >/dev/null 2>&1; then
+			echo "HATA: $_arq dosyası $_download_url adresinden indirilemedi" >&2
+			continue
+		fi
+	fi
+	if [[ -f "$_dir1/$_arq" ]] && [[ -s "$_dir1/$_arq" ]]; then
+		chmod +x "$_dir1/$_arq"
+	else
+		echo "HATA: $_arq indirilemedi veya $_dir1/$_arq dosyası boş" >&2
+	fi
+done
+mv $_dir1/cabecalho $_dir1/bot $_dir1/open.py $_dir1/proxy.py $_dir1/colors $_dir1/db $_dir2 >/dev/null 2>&1
+[[ ! -e /etc/autostart ]] && {
+	echo '#!/bin/bash
+clear
+	chmod +x /etc/autostart
+} || {
+	[[ $(ps x | grep "bot_plus" | grep -v grep | wc -l) != '0' ]] && wget -qO- https://raw.githubusercontent.com/shellscriptx/shellbot/master/ShellBot.sh >/etc/SSHPlus/ShellBot.sh
+	for proc in $(ps x | grep 'dmS' | grep -v 'grep' | awk {'print $1'}); do
+		screen -r -S "$proc" -X quit
+	done
+	screen -wipe >/dev/null
+	echo '#!/bin/bash
+clear
+	chmod +x /etc/autostart
+}
+(
+	crontab -l 2>/dev/null
+	echo "@daily /bin/verifatt"
+	echo "@reboot /etc/autostart"
+	echo "* * * * * /etc/autostart"
+	echo "0 */6 * * * /bin/uexpired"
+) | crontab -
+echo "$_lvk" | head -1 | tr -d '\r\n' >/bin/version
+[[ -s /bin/version ]] && cp /bin/version /home/sshplus 2>/dev/null
+if ! wget -q https://github.com/jqlang/jq/releases/latest/download/jq-linux-amd64 -O jq-linux64 2>/dev/null; then
+	wget -q https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 -O jq-linux64 2>/dev/null || {
+		apt-get install -y jq >/dev/null 2>&1
+	}
+fi
+[[ -f jq-linux64 ]] && chmod +x jq-linux64 && mv jq-linux64 $(which jq) 2>/dev/null
+
+if [[ ! -f /bin/menu ]] || [[ ! -x /bin/menu ]]; then
+	echo "HATA: Menu komutu düzgün kurulmadı!" >&2
+	echo "$_REPO_URL/Modules/menu adresinden menu yeniden indiriliyor..." >&2
+	if wget -q "$_REPO_URL/Modules/menu" -O /bin/menu 2>&1 || curl -sL "$_REPO_URL/Modules/menu" -o /bin/menu 2>&1; then
+		if [[ -f /bin/menu ]] && [[ -s /bin/menu ]]; then
+			chmod +x /bin/menu
+			echo "Menu başarıyla yeniden indirildi!" >&2
+		else
+			echo "HATA: Menu dosyası boş veya geçersiz!" >&2
+		fi
+	else
+		echo "HATA: Menu dosyası indirilemedi!" >&2
+	fi
+fi
+
+service cron restart >/dev/null 2>&1
+service ssh restart >/dev/null 2>&1
+[[ -d /var/www/html/openvpn ]] && service apache2 restart >/dev/null 2>&1
+rm -rf $lst1/list >/dev/null 2>&1
