@@ -18,13 +18,6 @@ lst=$1 && lst1=$2 && lst2=$3 && key1=$4 && key2=crz
 [[ ! -d /etc/SSHPlus ]] && mkdir /etc/SSHPlus
 [[ ! -d /etc/SSHPlus/userteste ]] && mkdir /etc/SSHPlus/userteste
 [[ ! -d /etc/SSHPlus/.tmp ]] && mkdir /etc/SSHPlus/.tmp
-[[ ! -d /etc/bot ]] && mkdir /etc/bot
-[[ ! -d /etc/bot/info-users ]] && mkdir /etc/bot/info-users
-[[ ! -d /etc/bot/arquivos ]] && mkdir /etc/bot/arquivos
-[[ ! -d /etc/bot/revenda ]] && mkdir /etc/bot/revenda
-[[ ! -d /etc/bot/suspensos ]] && mkdir /etc/bot/suspensos
-[[ ! -e /etc/bot/lista_ativos ]] && touch /etc/bot/lista_ativos
-[[ ! -e /etc/bot/lista_suspensos ]] && touch /etc/bot/lista_suspensos
 echo -e 'by: @CRAZY_VPN' >/usr/lib/sshplus && cat /usr/lib/sshplus >$lst2/licence && cat /usr/lib/sshplus > /etc/SSHPlus/.tmp/crazy
 netstat -nplt | grep -w 'apache2' | grep -w '80' && sed -i "s/Listen 80/Listen 81/g" /etc/apache2/ports.conf && service apache2 restart
 [[ "$(grep -o '#Port 22' /etc/ssh/sshd_config)" == "#Port 22" ]] && sed -i "s;#Port 22;Port 22;" /etc/ssh/sshd_config && service ssh restart
@@ -33,7 +26,7 @@ echo "PasswordAuthentication yes" >>/etc/ssh/sshd_config
 _dir1='/bin'
 _dir2='/etc/SSHPlus'
 rm $_dir2/cabecalho $_dir2/open.py $_dir2/proxy.py $_dir2/colors $_dir2/db >/dev/null 2>&1
-_mdls=("changepassword" "createuser" "expiredusers" "changeexpiration" "expirationmanager" "removeuser" "verifbot" "droplimiter" "changelimit" "ajuda" "sshmonitor" "userbackup" "instsqd" "menu" "speedtest" "bannersetup" "serversettings" "restartservices" "rebootsystem" "updatescript" "connections" "removescript" "vpsinfo" "userinfo" "verifatt" "uexpired" "cabecalho" "bot" "open.py" "proxy.py" "colors" "db" "multiport" "vpstraffic" "autorun")
+_mdls=("changepassword" "createuser" "expiredusers" "changeexpiration" "expirationmanager" "removeuser" "changelimit" "sshmonitor" "userbackup" "menu" "speedtest" "bannersetup" "serversettings" "SERVER_NAME" "restartservices" "rebootsystem" "updatescript" "connections" "removescript" "vpsinfo" "userinfo" "open.py" "proxy.py" "colors" "db" "multiport" "vpstraffic" "autorun")
 for _arq in ${_mdls[@]}; do
 	[[ -e $_dir1/$_arq ]] && rm $_dir1/$_arq >/dev/null 2>&1
 	_download_url="$_REPO_URL/Modules/$_arq"
@@ -49,7 +42,7 @@ for _arq in ${_mdls[@]}; do
 		echo "HATA: $_arq indirilemedi veya $_dir1/$_arq dosyası boş" >&2
 	fi
 done
-mv $_dir1/cabecalho $_dir1/bot $_dir1/open.py $_dir1/proxy.py $_dir1/colors $_dir1/db $_dir2 >/dev/null 2>&1
+mv $_dir1/open.py $_dir1/proxy.py $_dir1/colors $_dir1/db $_dir2 >/dev/null 2>&1
 [[ ! -e /etc/autostart ]] && {
 	echo '#!/bin/bash
 clear
@@ -66,10 +59,8 @@ clear
 }
 (
 	crontab -l 2>/dev/null
-	echo "@daily /bin/verifatt"
 	echo "@reboot /etc/autostart"
 	echo "* * * * * /etc/autostart"
-	echo "0 */6 * * * /bin/uexpired"
 ) | crontab -
 echo "$_lvk" | head -1 | tr -d '\r\n' >/bin/version
 [[ -s /bin/version ]] && cp /bin/version /home/sshplus 2>/dev/null
